@@ -1,0 +1,242 @@
+name: Metrics E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate_hit_ratio_min:
+        description: "Override GATE_HIT_RATIO_MIN (e.g., 0.65)"
+        required: false
+        type: string
+      gate_avg_top1_min:
+        description: "Override GATE_AVG_TOP1_MIN (e.g., 0.35)"
+        required: false
+        type: string
+      gate_strict:
+        description: "Gate mode: both|either"
+        required: false
+        type: string
+      gate_min_total:
+        description: "Minimum eval samples required (e.g., 10)"
+        required: false
+        type: string
+      gate_require_min_total:
+        description: "Require min total strictly: 0|1"
+        required: false
+        type: string
+  push:
+    branches: [ main, master ]
+
+jobs:
+  e2e-metrics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: docker-compose version
+
+      - name: Tighten ai_support_rag_ask p95 thresholds by branch
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_REF_NAME}"
+          echo "Branch: $BRANCH"
+
+          LLM_P95="2.0"
+          RAG_P95="1.0"
+          case "$BRANCH" in
+            release/*)
+              # Release: more strict p95 thresholds
+              LLM_P95="1.5"
+              RAG_P95="0.8"
+              ;;
+            *) ;;
+          esac
+
+          file="configs/rules/ai_support_rules.yml"
+          echo "Setting LLM p95 to ${LLM_P95}, RAG p95 to ${RAG_P95} in ${file}"
+          # Only modify the two RAG/ASK related rules by matching metric names
+          sed -i -E "s/(llm_generate_duration_seconds_bucket.*> )[0-9.]+/\1${LLM_P95}/" "$file"
+          sed -i -E "s/(rag_retrieval_duration_seconds_bucket.*> )[0-9.]+/\1${RAG_P95}/" "$file"
+
+      - name: Start stack (api, prometheus, grafana, redis, qdrant, alertmanager, ollama)
+        run: |
+          docker-compose -f docker-compose.yml pull || true
+          docker-compose -f docker-compose.yml up -d api prometheus grafana redis qdrant alertmanager ollama
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for API (http://localhost:8000/metrics)"
+          for i in {1..40}; do curl -fsS http://localhost:8000/metrics && break || sleep 5; done
+          echo "Waiting for Prometheus (http://localhost:9090/-/ready)"
+          for i in {1..40}; do curl -fsS http://localhost:9090/-/ready && break || sleep 5; done
+          echo "Waiting for Grafana (http://localhost:3000/login)"
+          for i in {1..40}; do curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:3000/login | grep -E "^(200|302)$" && break || sleep 5; done
+          echo "Waiting for Ollama (http://localhost:11434)"
+          for i in {1..40}; do curl -fsS http://localhost:11434/api/tags && break || sleep 5; done
+
+      - name: Pull small Ollama model
+        run: |
+          docker exec ai_support_ollama ollama pull llama3.2:1b-instruct
+
+      - name: Install script deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
+
+      - name: Login Grafana and fetch alert JSON
+        env:
+          GRAFANA_USER: ${{ secrets.GRAFANA_USER }}
+          GRAFANA_PASS: ${{ secrets.GRAFANA_PASS }}
+        run: |
+          set -e
+          mkdir -p artifacts/metrics
+          if [ -n "${GRAFANA_USER}" ] && [ -n "${GRAFANA_PASS}" ]; then
+            echo "Logging into Grafana..."
+            curl -fsS -c artifacts/metrics/grafana_cookies.txt \
+              -H 'Content-Type: application/json' \
+              -d "{\"user\":\"${GRAFANA_USER}\",\"password\":\"${GRAFANA_PASS}\"}" \
+              http://localhost:3000/login > /dev/null
+            echo "Fetching Grafana alert rules and active alerts..."
+            curl -fsS -b artifacts/metrics/grafana_cookies.txt \
+              http://localhost:3000/api/alert-rules \
+              -o artifacts/metrics/grafana_alert_rules.json || true
+            curl -fsS -b artifacts/metrics/grafana_cookies.txt \
+              http://localhost:3000/api/alertmanager/grafana/api/v2/alerts \
+              -o artifacts/metrics/grafana_active_alerts.json || true
+          else
+            echo "GRAFANA_USER/GRAFANA_PASS not set in Secrets, skip Grafana fetch."
+          fi
+
+      - name: Export Grafana dashboard JSON
+        run: |
+          mkdir -p artifacts/metrics
+          # 使用匿名或 cookie 导出（匿名适用于未启用鉴权场景）
+          DASH_UID=ai-support-export-download
+          if [ -f artifacts/metrics/grafana_cookies.txt ]; then
+            curl -fsS -b artifacts/metrics/grafana_cookies.txt \
+              "http://localhost:3000/api/dashboards/uid/${DASH_UID}" \
+              -o artifacts/metrics/grafana_dashboard_${DASH_UID}.json || true
+          else
+            curl -fsS \
+              "http://localhost:3000/api/dashboards/uid/${DASH_UID}" \
+              -o artifacts/metrics/grafana_dashboard_${DASH_UID}.json || true
+          fi
+
+      - name: Run metrics verification script
+        run: |
+          bash scripts/verify_tenant_metrics.sh demo
+
+      - name: Prepare demo embeddings (Qdrant upsert)
+        env:
+          SRC_JSONL: demo_faq.jsonl
+          BATCH_SIZE: "64"
+          MAX_DOCS: "500"
+          RAG_MODEL: llama3.2:1b-instruct
+        run: |
+          bash scripts/prepare_demo_embeddings.sh
+
+      - name: Smoke test unified ask API
+        env:
+          MODEL: llama3.2:1b-instruct
+        run: |
+          bash scripts/smoke_ask.sh
+
+      - name: Set gate thresholds by branch
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_REF_NAME}"
+          echo "Branch: $BRANCH"
+          # If inputs are provided, respect them; else set by branch
+          set_var() {
+            local key="$1"; shift
+            local input_val="$1"; shift
+            local default_val="$1"; shift
+            if [ -n "$input_val" ]; then
+              echo "$key=$input_val" >> "$GITHUB_ENV"
+            else
+              echo "$key=$default_val" >> "$GITHUB_ENV"
+            fi
+          }
+
+          case "$BRANCH" in
+            main|master)
+              set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min }}" "0.70"
+              set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min }}" "0.40"
+              set_var GATE_STRICT "${{ inputs.gate_strict }}" "both"
+              set_var GATE_MIN_TOTAL "${{ inputs.gate_min_total }}" "40"
+              set_var GATE_REQUIRE_MIN_TOTAL "${{ inputs.gate_require_min_total }}" "1"
+              ;;
+            release/*)
+              # Release 候选：接近主分支的严格策略，但样本量略低以便频繁发布
+              set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min }}" "0.70"
+              set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min }}" "0.40"
+              set_var GATE_STRICT "${{ inputs.gate_strict }}" "both"
+              set_var GATE_MIN_TOTAL "${{ inputs.gate_min_total }}" "25"
+              set_var GATE_REQUIRE_MIN_TOTAL "${{ inputs.gate_require_min_total }}" "1"
+              ;;
+            hotfix/*)
+              # Hotfix：保持严格阈值，但要求样本量不宜过高以加快修复发布
+              set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min }}" "0.65"
+              set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min }}" "0.35"
+              set_var GATE_STRICT "${{ inputs.gate_strict }}" "both"
+              set_var GATE_MIN_TOTAL "${{ inputs.gate_min_total }}" "15"
+              set_var GATE_REQUIRE_MIN_TOTAL "${{ inputs.gate_require_min_total }}" "1"
+              ;;
+            dev|develop|staging)
+              set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min }}" "0.65"
+              set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min }}" "0.35"
+              set_var GATE_STRICT "${{ inputs.gate_strict }}" "both"
+              set_var GATE_MIN_TOTAL "${{ inputs.gate_min_total }}" "20"
+              set_var GATE_REQUIRE_MIN_TOTAL "${{ inputs.gate_require_min_total }}" "0"
+              ;;
+            feature/*|feat/*)
+              set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min }}" "0.55"
+              set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min }}" "0.25"
+              set_var GATE_STRICT "${{ inputs.gate_strict }}" "either"
+              set_var GATE_MIN_TOTAL "${{ inputs.gate_min_total }}" "10"
+              set_var GATE_REQUIRE_MIN_TOTAL "${{ inputs.gate_require_min_total }}" "0"
+              ;;
+            *)
+              # default medium strict
+              set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min }}" "0.65"
+              set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min }}" "0.35"
+              set_var GATE_STRICT "${{ inputs.gate_strict }}" "both"
+              set_var GATE_MIN_TOTAL "${{ inputs.gate_min_total }}" "15"
+              set_var GATE_REQUIRE_MIN_TOTAL "${{ inputs.gate_require_min_total }}" "0"
+              ;;
+          esac
+
+      - name: RAG eval gate (pre-deploy)
+        env:
+          RAG_EVAL_QUERIES: demo_faq.jsonl
+          RAG_TOP_K: "5"
+          RAG_MODEL: llama3.2:1b-instruct
+        run: |
+          bash scripts/rag_eval_gate.sh
+
+      - name: Backup Qdrant collection
+        env:
+          RAG_COLLECTION: default_collection
+        run: |
+          bash scripts/backup_qdrant_collection.sh
+
+      - name: Upload metrics artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/metrics
+          if-no-files-found: warn
+
+      - name: Dump docker logs on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker-compose -f docker-compose.yml logs --no-color --tail=200
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker-compose -f docker-compose.yml down -v || true
