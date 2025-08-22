@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Docker Compose
-        run: docker-compose version
+        run: docker compose version
 
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
         run: |
@@ -62,8 +62,8 @@ jobs:
 
       - name: Start stack (api, prometheus, grafana, redis, qdrant, alertmanager, ollama)
         run: |
-          docker-compose -f docker-compose.yml pull || true
-          docker-compose -f docker-compose.yml up -d api prometheus grafana redis qdrant alertmanager ollama
+          docker compose -f docker-compose.yml pull || true
+          docker compose -f docker-compose.yml up -d api prometheus grafana redis qdrant alertmanager ollama
 
       - name: Wait for services
         run: |
@@ -234,9 +234,9 @@ jobs:
         if: failure()
         run: |
           docker ps -a
-          docker-compose -f docker-compose.yml logs --no-color --tail=200
+          docker compose -f docker-compose.yml logs --no-color --tail=200
 
       - name: Teardown
         if: always()
         run: |
-          docker-compose -f docker-compose.yml down -v || true
+          docker compose -f docker-compose.yml down -v || true
