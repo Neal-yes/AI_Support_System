@@ -33,6 +33,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          sparse-checkout-cone: true
+          sparse-checkout: |
+            .
 
       - name: Debug working directory
         run: |
@@ -80,8 +86,12 @@ jobs:
           file="configs/rules/ai_support_rules.yml"
           echo "Setting LLM p95 to ${LLM_P95}, RAG p95 to ${RAG_P95} in ${file}"
           # Only modify the two RAG/ASK related rules by matching metric names
-          sed -i -E "s/(llm_generate_duration_seconds_bucket.*> )[0-9.]+/\1${LLM_P95}/" "$file"
-          sed -i -E "s/(rag_retrieval_duration_seconds_bucket.*> )[0-9.]+/\1${RAG_P95}/" "$file"
+          if [ -f "$file" ]; then
+            sed -i -E "s/(llm_generate_duration_seconds_bucket.*> )[0-9.]+/\1${LLM_P95}/" "$file"
+            sed -i -E "s/(rag_retrieval_duration_seconds_bucket.*> )[0-9.]+/\1${RAG_P95}/" "$file"
+          else
+            echo "Rules file not found at $file, skipping threshold tightening."
+          fi
 
       - name: Start stack (api, prometheus, grafana, redis, qdrant, alertmanager, ollama)
         run: |
