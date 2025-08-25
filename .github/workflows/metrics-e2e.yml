@@ -34,6 +34,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug working directory
+        run: |
+          echo "PWD:" && pwd
+          echo "Root listing:" && ls -la
+          echo "configs listing:" && ls -la configs || true
+          echo "docker-compose.yml exists?" && [ -f docker-compose.yml ] && echo yes || echo no
+
       - name: Set up Docker Compose
         run: docker compose version
 
