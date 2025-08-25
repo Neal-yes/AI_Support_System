@@ -90,6 +90,11 @@ jobs:
             echo "Rules file not found at $file, skipping threshold tightening."
           fi
 
+      - name: Set model name
+        run: |
+          # Allow override via workflow env or inputs; default to a tiny model for CI reliability
+          echo "MODEL_SMALL=${MODEL_SMALL:-qwen2:0.5b}" >> "$GITHUB_ENV"
+
       - name: Start stack (api, prometheus, grafana, redis, qdrant, alertmanager, ollama)
         run: |
           docker compose -f docker-compose.yml pull || true
@@ -108,7 +113,15 @@ jobs:
 
       - name: Pull small Ollama model
         run: |
-          docker exec ai_support_ollama ollama pull llama3.2:1b-instruct
+          set -e
+          echo "Pulling model: ${MODEL_SMALL}"
+          for i in {1..3}; do
+            if docker exec ai_support_ollama ollama pull "${MODEL_SMALL}"; then
+              break
+            fi
+            echo "Model pull failed (attempt $i), retrying in 10s..."
+            sleep 10
+          done
 
       - name: Install script deps
         run: |
@@ -163,13 +176,13 @@ jobs:
           SRC_JSONL: demo_faq.jsonl
           BATCH_SIZE: "64"
           MAX_DOCS: "500"
-          RAG_MODEL: llama3.2:1b-instruct
+          RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
           bash scripts/prepare_demo_embeddings.sh
 
       - name: Smoke test unified ask API
         env:
-          MODEL: llama3.2:1b-instruct
+          MODEL: ${{ env.MODEL_SMALL }}
         run: |
           bash scripts/smoke_ask.sh
 
@@ -242,7 +255,7 @@ jobs:
         env:
           RAG_EVAL_QUERIES: demo_faq.jsonl
           RAG_TOP_K: "5"
-          RAG_MODEL: llama3.2:1b-instruct
+          RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
           bash scripts/rag_eval_gate.sh
 
