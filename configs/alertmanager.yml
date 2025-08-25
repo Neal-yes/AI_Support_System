@@ -1,0 +1,33 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'tenant', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+  receiver: default-webhook
+  routes:
+    - matchers:
+        - severity = page
+      receiver: pager-webhook
+    - matchers:
+        - tenant = demo
+      receiver: default-webhook
+
+inhibit_rules:
+  - source_matchers:
+      - severity = page
+    target_matchers:
+      - severity = warning
+    equal: ['alertname', 'tenant']
+
+receivers:
+  - name: default-webhook
+    webhook_configs:
+      - url: 'http://api:8000/api/v1/alerts/webhook'
+        send_resolved: true
+  - name: pager-webhook
+    webhook_configs:
+      - url: 'http://api:8000/api/v1/alerts/webhook'
+        send_resolved: true

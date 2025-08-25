@@ -1,0 +1,227 @@
+groups:
+- name: ai_support_concurrency
+  rules:
+  - alert: DownloadConcurrencySaturated
+    expr: avg_over_time(download_running[2m]) >= 1
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: 下载并发接近/达到阈值
+      description: download_running 持续≥1（本地阈值），collection={{ $labels.collection }}, gzip={{ $labels.gzip }}
+  - alert: ExportConcurrencyHigh
+    expr: avg_over_time(export_running[5m]) >= 1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: 导出并发持续占用
+      description: export_running 持续≥1（根据生产阈值调整），collection={{ $labels.collection }}
+
+- name: ai_support_export
+  rules:
+  - alert: ExportFailedRecently
+    expr: increase(export_status_total{status="failed"}[5m]) > 0
+    for: 0m
+    labels:
+      severity: page
+    annotations:
+      summary: 导出任务失败
+      description: 近 5 分钟导出失败计数 > 0，collection={{ $labels.collection }}
+  - alert: ExportRunningTooLong
+    expr: export_running > 0
+    for: 30m
+    labels:
+      severity: info
+    annotations:
+      summary: 导出任务长时间运行
+      description: 某些导出任务运行超过 30 分钟仍未完成，collection={{ $labels.collection }}
+
+- name: ai_support_http
+  rules:
+  - alert: TooMany429OnDownload
+    expr: sum by (path) (rate(http_requests_total{status="429",path="/collections/export/download"}[5m])) > 0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: 下载接口 429 持续出现
+      description: 近 5 分钟下载接口返回 429，可能因并发限制触发；请检查 DOWNLOAD_MAX_CONCURRENCY 与实际负载
+
+# 基于工具网关 metrics 的通用告警
+- name: ai_support_tools
+  rules:
+  # 1) 高错误率：在有一定请求量前提下，5 分钟错误率 > 5%
+  - alert: ToolGatewayHighErrorRate
+    expr: |
+      (sum by (tenant,tool_type,tool_name) (increase(tools_errors_total[5m]))
+        /
+       clamp_min(sum by (tenant,tool_type,tool_name) (increase(tools_requests_total[5m])), 1)) > 0.05
+      and sum by (tenant,tool_type,tool_name) (increase(tools_requests_total[5m])) > 20
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: 工具网关错误率过高（>5%）
+      description: tenant={{ $labels.tenant }}, tool={{ $labels.tool_type }}/{{ $labels.tool_name }}，5 分钟窗口内错误率升高。
+
+  # 2) p95 延迟过高（>1s 告警）
+  - alert: ToolGatewayHighLatencyP95
+    expr: |
+      histogram_quantile(0.95, sum by (le) (rate(tools_request_latency_seconds_bucket[5m]))) > 1.0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: 工具网关 p95 延迟过高（>1s）
+      description: 近 5 分钟窗口 p95 延迟超过 1s，请检查下游依赖或限流策略。
+
+  # 3) 持续出现限流
+  - alert: ToolGatewayRateLimited
+    expr: sum by (tenant,tool_type,tool_name) (rate(tools_rate_limited_total[5m])) > 0
+    for: 10m
+    labels:
+      severity: info
+    annotations:
+      summary: 工具网关持续限流
+      description: tenant={{ $labels.tenant }}, tool={{ $labels.tool_type }}/{{ $labels.tool_name }} 出现持续限流，请评估配额与峰值流量。
+
+  # 4) 熔断触发
+  - alert: ToolGatewayCircuitOpen
+    expr: sum by (tenant,tool_type,tool_name) (increase(tools_circuit_open_total[5m])) > 0
+    for: 0m
+    labels:
+      severity: page
+    annotations:
+      summary: 工具网关熔断打开
+      description: 近 5 分钟内发生熔断，请立即查看下游可用性与错误集中度。
+
+  # 5) 重试激增
+  - alert: ToolGatewayRetriesSpike
+    expr: sum by (tenant,tool_type,tool_name) (increase(tools_retries_total[5m])) > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: 工具网关重试次数激增
+      description: tenant={{ $labels.tenant }}, tool={{ $labels.tool_type }}/{{ $labels.tool_name }} 近 5 分钟重试次数 > 10，可能存在间歇性失败。
+
+  # 6) 缓存命中率过低（参考阈值 <10% 且请求量充足）
+  - alert: ToolGatewayLowCacheHitRate
+    expr: |
+      (sum by (tenant,tool_type,tool_name) (increase(tools_cache_hit_total[15m]))
+        /
+       clamp_min(sum by (tenant,tool_type,tool_name) (increase(tools_requests_total[15m])), 1)) < 0.10
+      and sum by (tenant,tool_type,tool_name) (increase(tools_requests_total[15m])) > 50
+    for: 15m
+    labels:
+      severity: info
+    annotations:
+      summary: 工具网关缓存命中率偏低
+      description: 近 15 分钟缓存命中率低于 10%，请检查缓存策略与 key 规范化是否有效。
+
+# --- Demo rules below (disabled by default) ---
+ # - name: ai_support_http_demo
+ #   rules:
+ #   - alert: TooMany429OnDownloadDemo
+ #     expr: sum by (path) (increase(http_requests_total{status="429",path="/collections/export/download"}[2m])) >= 1
+ #     for: 0m
+ #     labels:
+ #       severity: info
+ #     annotations:
+ #       summary: 429 快速演示告警（1 分钟窗口）
+ #       description: 近 2 分钟下载接口出现 429，用于本地演示与联调
+
+# 联调用演示规则：始终触发，便于验证 Alertmanager -> Webhook 链路
+- name: ai_support_demo
+  rules:
+  - alert: AlwaysFiringDemo
+    expr: vector(1)
+    for: 0m
+    labels:
+      severity: info
+      tenant: demo
+    annotations:
+      summary: 演示告警（始终触发）
+      description: 用于本地联调告警链路与 Webhook 接收端。
+
+# 录制规则：标准化导出成功率与工具错误占比，便于仪表盘复用
+- name: ai_support_recording
+  rules:
+  - record: export_success_rate
+    expr: |
+      (sum by (tenant,collection) (rate(export_status_total{status="succeeded"}[5m])))
+        /
+      clamp_min(sum by (tenant,collection) (rate(export_status_total[5m])), 1)
+
+  - record: tools_error_ratio
+    expr: |
+      (sum by (tenant,tool_type,tool_name) (rate(tools_errors_total[5m])))
+        /
+      clamp_min(sum by (tenant,tool_type,tool_name) (rate(tools_requests_total[5m])), 1)
+
+  # 快速联调版（1m 窗口），适合本地验证
+  - record: export_success_rate_1m
+    expr: |
+      (sum by (tenant,collection) (rate(export_status_total{status="succeeded"}[1m])))
+        /
+      clamp_min(sum by (tenant,collection) (rate(export_status_total[1m])), 1)
+
+  - record: tools_error_ratio_1m
+    expr: |
+      (sum by (tenant,tool_type,tool_name) (rate(tools_errors_total[1m])))
+        /
+      clamp_min(sum by (tenant,tool_type,tool_name) (rate(tools_requests_total[1m])), 1)
+
+# Ask/RAG 相关告警
+- name: ai_support_rag_ask
+  rules:
+  # 1) ask 接口错误率过高（4xx/5xx，且请求量充足）
+  - alert: AskHighErrorRate
+    expr: |
+      (sum(rate(http_requests_total{path="/api/v1/ask",status=~"4..|5.."}[5m]))
+        /
+       clamp_min(sum(rate(http_requests_total{path="/api/v1/ask"}[5m])), 1)) > 0.10
+      and sum(rate(http_requests_total{path="/api/v1/ask"}[5m])) > 0.2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: ask 接口错误率过高（>10%）
+      description: 近 5 分钟窗口 ask 错误率提升，请检查后端依赖与模型健康。
+
+  # 2) LLM 生成 p95 延迟过高
+  - alert: LlmGenerateLatencyP95High
+    expr: |
+      histogram_quantile(0.95, sum by (le) (rate(llm_generate_duration_seconds_bucket[5m]))) > 2.0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: LLM 生成 p95 延迟过高（>2s）
+      description: 近 5 分钟 p95 生成延迟升高，可能因模型负载或资源不足。
+
+  # 3) RAG 检索 p95 延迟过高
+  - alert: RagRetrievalLatencyP95High
+    expr: |
+      histogram_quantile(0.95, sum by (le) (rate(rag_retrieval_duration_seconds_bucket[5m]))) > 1.0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: RAG 检索 p95 延迟过高（>1s）
+      description: 近 5 分钟 p95 检索延迟升高，请检查向量库负载与索引健康。
+
+  # 4) RAG 命中率偏低（以 rag_matches_total 推估）
+  - alert: RagMatchRateLow
+    expr: |
+      (sum(rate(rag_matches_total{has_match="true"}[10m]))
+        /
+       clamp_min(sum(rate(rag_matches_total[10m])), 1)) < 0.50
+      and sum(rate(rag_matches_total[10m])) > 0.1
+    for: 10m
+    labels:
+      severity: info
+    annotations:
+      summary: RAG 命中率偏低（<50%）
+      description: 近 10 分钟命中率偏低，请检查向量库内容质量与检索参数（top_k、过滤条件）。

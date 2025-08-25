@@ -1,0 +1,154 @@
+{
+  "title": "AI Support - Export/Download",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "download_running by collection,gzip",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "download_running",
+          "legendFormat": "{{collection}} gzip={{gzip}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "export_running by collection",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "export_running",
+          "legendFormat": "{{collection}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 download_duration_seconds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(download_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "export_status_total rate by status",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "sum by (status,collection) (rate(export_status_total[5m]))",
+          "legendFormat": "{{status}} {{collection}}",
+          "refId": "A"
+        }
+      ]
+    }
+    ,
+    {
+      "type": "timeseries",
+      "title": "tools_requests_total rate by tenant,type,name",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "sum by (tenant,tool_type,tool_name) (rate(tools_requests_total[5m]))",
+          "legendFormat": "{{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "tools_errors_total rate by reason",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+      "targets": [
+        {
+          "expr": "sum by (reason,tenant,tool_type,tool_name) (rate(tools_errors_total[5m]))",
+          "legendFormat": "{{reason}} {{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 tools_request_latency_seconds",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(tools_request_latency_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "tools_rate_limited_total rate",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "targets": [
+        {
+          "expr": "sum by (tenant,tool_type,tool_name) (rate(tools_rate_limited_total[5m]))",
+          "legendFormat": "{{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "tools_circuit_open_total rate",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+      "targets": [
+        {
+          "expr": "sum by (tenant,tool_type,tool_name) (rate(tools_circuit_open_total[5m]))",
+          "legendFormat": "{{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "tools_cache_hit_total rate",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "targets": [
+        {
+          "expr": "sum by (tenant,tool_type,tool_name) (rate(tools_cache_hit_total[5m]))",
+          "legendFormat": "{{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "tools_retries_total rate",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 32},
+      "targets": [
+        {
+          "expr": "sum by (tenant,tool_type,tool_name) (rate(tools_retries_total[5m]))",
+          "legendFormat": "{{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "tools_error_ratio_1m by tenant,type,name (recording rule)",
+      "gridPos": {"h": 8, "w": 12, "x": 8, "y": 32},
+      "targets": [
+        {
+          "expr": "tools_error_ratio_1m",
+          "legendFormat": "{{tenant}} {{tool_type}} {{tool_name}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
