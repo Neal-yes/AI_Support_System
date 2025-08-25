@@ -54,10 +54,10 @@ jobs:
           else
             echo "configs/env.example and .env not found, generating minimal .env"
             cat > .env <<'EOF'
-COMPOSE_PROJECT_NAME=ai_support
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=admin
-EOF
+            COMPOSE_PROJECT_NAME=ai_support
+            GRAFANA_ADMIN_USER=admin
+            GRAFANA_ADMIN_PASSWORD=admin
+            EOF
           fi
 
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
