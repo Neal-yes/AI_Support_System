@@ -37,6 +37,15 @@ jobs:
       - name: Set up Docker Compose
         run: docker compose version
 
+      - name: Prepare .env for Compose
+        run: |
+          if [ -f configs/env.example ]; then
+            cp -f configs/env.example .env
+            echo "Prepared .env from configs/env.example"
+          else
+            echo "configs/env.example not found" && exit 1
+          fi
+
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
         run: |
           set -euo pipefail
