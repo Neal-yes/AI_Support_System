@@ -13,13 +13,66 @@ def get_client() -> QdrantClient:
 
 
 def ensure_collection(collection_name: str, vector_size: int, distance: qmodels.Distance = qmodels.Distance.COSINE) -> None:
+    """Ensure a Qdrant collection exists with the desired vector size.
+
+    If the collection exists but its vector size mismatches, drop and recreate to avoid
+    runtime errors like "Vector dimension error: expected dim: X, got Y".
+    Supports both single-vector and named-vector configurations.
+    """
     client = get_client()
-    existing = client.get_collection(collection_name=collection_name) if collection_exists(collection_name) else None
-    if existing is None:
+    if not collection_exists(collection_name):
         client.create_collection(
             collection_name=collection_name,
             vectors_config=qmodels.VectorParams(size=vector_size, distance=distance),
         )
+        return
+
+    # Collection exists: check its current vector size
+    try:
+        info = client.get_collection(collection_name=collection_name)
+        existing_size = None
+        # Try to navigate common schema layouts
+        vectors_cfg = None
+        # qdrant >=1.6: info.config.params.vectors
+        vectors_cfg = getattr(getattr(getattr(info, "config", None), "params", None), "vectors", None)
+        if vectors_cfg is None:
+            # Fallback older or different SDK shapes
+            vectors_cfg = getattr(info, "vectors", None)
+
+        if isinstance(vectors_cfg, qmodels.VectorParams):
+            existing_size = getattr(vectors_cfg, "size", None)
+        elif isinstance(vectors_cfg, dict):
+            # Named vectors mapping: pick the first entry's size
+            try:
+                first = next(iter(vectors_cfg.values()))
+                existing_size = getattr(first, "size", None)
+            except Exception:
+                existing_size = None
+        # If still unknown, try dict() conversion
+        if existing_size is None:
+            try:
+                as_dict = info.model_dump() if hasattr(info, "model_dump") else info.dict()  # type: ignore[assignment]
+                params = as_dict.get("config", {}).get("params", {})
+                vecs = params.get("vectors") or as_dict.get("vectors")
+                if isinstance(vecs, dict):
+                    first = next(iter(vecs.values()))
+                    existing_size = int(first.get("size")) if isinstance(first, dict) else None
+                elif isinstance(vecs, dict) is False and vecs is not None:
+                    existing_size = int(getattr(vecs, "size", None))
+            except Exception:
+                existing_size = None
+
+        if existing_size is not None and int(existing_size) != int(vector_size):
+            # Recreate with the correct size
+            client.delete_collection(collection_name=collection_name)
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config=qmodels.VectorParams(size=vector_size, distance=distance),
+            )
+    except Exception:
+        # If we fail to introspect, attempt to use the collection as-is
+        # Better fail later with a clear server error than crash here.
+        pass
 
 
 def collection_exists(collection_name: str) -> bool:
