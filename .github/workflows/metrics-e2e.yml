@@ -154,22 +154,41 @@ jobs:
 
       - name: Export Grafana dashboard JSON
         run: |
+          set +e
           mkdir -p artifacts/metrics
-          # 使用匿名或 cookie 导出（匿名适用于未启用鉴权场景）
           DASH_UID=ai-support-export-download
           if [ -f artifacts/metrics/grafana_cookies.txt ]; then
+            echo "Export with cookie for dashboard UID=${DASH_UID}"
             curl -fsS -b artifacts/metrics/grafana_cookies.txt \
               "http://localhost:3000/api/dashboards/uid/${DASH_UID}" \
               -o artifacts/metrics/grafana_dashboard_${DASH_UID}.json || true
           else
-            curl -fsS \
-              "http://localhost:3000/api/dashboards/uid/${DASH_UID}" \
-              -o artifacts/metrics/grafana_dashboard_${DASH_UID}.json || true
+            echo "No Grafana login cookie found; skip dashboard export (auth likely required)."
           fi
 
       - name: Run metrics verification script
         run: |
-          bash scripts/verify_tenant_metrics.sh demo
+          set -euo pipefail
+          echo "Bash: $(bash --version | head -n1)"
+          echo "PWD=$(pwd)"
+          echo "Repo root listing:" && ls -la
+          echo "Scripts listing (relative):" && ls -la scripts || true
+          echo "Scripts listing (abs):" && ls -la "$GITHUB_WORKSPACE/scripts" || true
+          echo "Checking required CLI tools..."
+          if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            echo "jq or curl missing; installing..."
+            sudo apt-get update -y
+            sudo apt-get install -y jq curl
+          fi
+          echo "jq: $(jq --version)"
+          echo "curl: $(curl --version | head -n1)"
+          if [ ! -f "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh" ]; then
+            echo "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh not found" >&2
+            exit 2
+          fi
+          mkdir -p artifacts/metrics
+          echo "Running verify_tenant_metrics.sh ..."
+          bash -x "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh" demo
 
       - name: Prepare demo embeddings (Qdrant upsert)
         env:
@@ -178,13 +197,13 @@ jobs:
           MAX_DOCS: "500"
           RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
-          bash scripts/prepare_demo_embeddings.sh
+          bash "$GITHUB_WORKSPACE/scripts/prepare_demo_embeddings.sh"
 
       - name: Smoke test unified ask API
         env:
           MODEL: ${{ env.MODEL_SMALL }}
         run: |
-          bash scripts/smoke_ask.sh
+          bash "$GITHUB_WORKSPACE/scripts/smoke_ask.sh"
 
       - name: Set gate thresholds by branch
         run: |
@@ -257,13 +276,13 @@ jobs:
           RAG_TOP_K: "5"
           RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
-          bash scripts/rag_eval_gate.sh
+          bash "$GITHUB_WORKSPACE/scripts/rag_eval_gate.sh"
 
       - name: Backup Qdrant collection
         env:
           RAG_COLLECTION: default_collection
         run: |
-          bash scripts/backup_qdrant_collection.sh
+          bash "$GITHUB_WORKSPACE/scripts/backup_qdrant_collection.sh"
 
       - name: Upload metrics artifacts
         if: always()
