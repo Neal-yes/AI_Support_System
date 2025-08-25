@@ -36,9 +36,6 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-          sparse-checkout-cone: true
-          sparse-checkout: |
-            .
 
       - name: Debug working directory
         run: |
