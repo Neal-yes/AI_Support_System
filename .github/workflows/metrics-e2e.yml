@@ -42,8 +42,15 @@ jobs:
           if [ -f configs/env.example ]; then
             cp -f configs/env.example .env
             echo "Prepared .env from configs/env.example"
+          elif [ -f .env ]; then
+            echo ".env already exists in repo root, using it"
           else
-            echo "configs/env.example not found" && exit 1
+            echo "configs/env.example and .env not found, generating minimal .env"
+            cat > .env <<'EOF'
+COMPOSE_PROJECT_NAME=ai_support
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=admin
+EOF
           fi
 
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
