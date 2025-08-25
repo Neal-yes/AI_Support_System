@@ -53,11 +53,11 @@ jobs:
             echo ".env already exists in repo root, using it"
           else
             echo "configs/env.example and .env not found, generating minimal .env"
-            cat > .env <<'EOF'
-            COMPOSE_PROJECT_NAME=ai_support
-            GRAFANA_ADMIN_USER=admin
-            GRAFANA_ADMIN_PASSWORD=admin
-            EOF
+            {
+              echo "COMPOSE_PROJECT_NAME=ai_support";
+              echo "GRAFANA_ADMIN_USER=admin";
+              echo "GRAFANA_ADMIN_PASSWORD=admin";
+            } > .env
           fi
 
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
