@@ -190,6 +190,31 @@ jobs:
           echo "Running verify_tenant_metrics.sh ..."
           bash -x "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh" demo
 
+      - name: Ensure demo dataset (demo_faq.jsonl)
+        run: |
+          set -euo pipefail
+          echo "PWD=$(pwd)"
+          echo "Root listing before ensure:" && ls -la || true
+          if [ -f demo_faq.jsonl ]; then
+            echo "demo_faq.jsonl exists"
+          elif [ -f demo_faq.jsonl.gz ]; then
+            echo "Found demo_faq.jsonl.gz, inflating..."
+            gunzip -c demo_faq.jsonl.gz > demo_faq.jsonl
+          elif [ -f demo.jsonl ]; then
+            echo "Fallback to demo.jsonl -> demo_faq.jsonl"
+            cp -f demo.jsonl demo_faq.jsonl
+          elif [ -f demo.jsonl.gz ]; then
+            echo "Fallback to demo.jsonl.gz -> demo_faq.jsonl"
+            gunzip -c demo.jsonl.gz > demo_faq.jsonl
+          else
+            echo "No demo jsonl found. Synthesizing minimal demo_faq.jsonl"
+            printf '%s\n' \
+              '{"tag":"demo","question":"What is AI Support System?","answer":"An internal demo project for metrics and RAG."}' \
+              '{"tag":"demo","question":"How to contact support?","answer":"Use the /ask API or check README."}' \
+              > demo_faq.jsonl
+          fi
+          echo "Root listing after ensure:" && ls -la || true
+
       - name: Prepare demo embeddings (Qdrant upsert)
         env:
           SRC_JSONL: demo_faq.jsonl
