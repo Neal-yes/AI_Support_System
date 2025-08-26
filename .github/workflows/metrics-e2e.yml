@@ -227,6 +227,7 @@ jobs:
       - name: Smoke test unified ask API
         env:
           MODEL: ${{ env.MODEL_SMALL }}
+          SMOKE_VERBOSE: "1"
         run: |
           bash "$GITHUB_WORKSPACE/scripts/smoke_ask.sh"
 
