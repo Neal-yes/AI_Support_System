@@ -9,6 +9,7 @@ from src.app.routers.admin import router as admin_router
 from src.app.routers.tools import router as tools_router
 from src.app.routers.alerts import router as alerts_router
 from src.app.routers.ask import router as ask_router
+from src.app.routers.db import router as db_router
 from src.app.core.middleware import RequestContextMiddleware
 from src.app.core.errors import register_exception_handlers
 from src.app.config import settings
@@ -58,3 +59,4 @@ app.include_router(admin_router)
 app.include_router(tools_router)
 app.include_router(alerts_router)
 app.include_router(ask_router)
+app.include_router(db_router)

@@ -297,6 +297,38 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
      - 限流/熔断/缓存/singleflight 的稳定键包含：`tenant_id`、`tool_type`、`tool_name`、标准化后的 `params`。
      - 结构化日志会记录 `event`（如 `tools_request`/`tools_cache_hit`/`tools_retry`/`tools_circuit_open` 等）与 `request_id`，便于排查与关联。
 
+### 只读 DB_QUERY 模板：`POST /api/v1/db/query_template`
+
+- 功能：以模板化、参数化且只读（仅 SELECT）的方式执行数据库查询；支持 `explain=true` 返回执行计划。
+- 安全约束：
+  - 仅允许 `SELECT` 开头；拒绝 `;`、注释（`--`、`/* */`）与 DML/DDL（INSERT/UPDATE/DELETE/ALTER/DROP/CREATE/GRANT/REVOKE/...）。
+  - 自动包裹 `LIMIT`（模板内无需写 LIMIT），默认 `max_rows=1000`（按模板可配置）。
+  - 只读账号、参数化执行（psycopg3），超时（默认 3000ms，按模板可配置）。
+- 示例模板（内置）：`echo_int`：
+  ```sql
+  SELECT %(x)s::int AS x
+  ```
+- 请求示例：
+  ```bash
+  # 1) 执行查询（只读）
+  curl -s -X POST http://localhost:8000/api/v1/db/query_template \
+    -H 'Content-Type: application/json' \
+    -H 'X-Tenant-Id: demo' \
+    -d '{"template_id":"echo_int","params":{"x":123}}' | jq .
+
+  # 2) 仅查看执行计划（不执行）
+  curl -s -X POST http://localhost:8000/api/v1/db/query_template \
+    -H 'Content-Type: application/json' \
+    -d '{"template_id":"echo_int","params":{"x":1},"explain":true}' | jq .
+  ```
+- 返回示例：
+  ```json
+  {"template_id":"echo_int","template_version":"v1","row_count":1,"rows":[{"x":123}]}
+  ```
+- Prometheus 指标：
+  - `db_query_duration_seconds{template,tenant}` 查询耗时直方图
+  - `db_query_total{template,tenant,result}` 查询计数（result=ok|rejected|timeout|error）
+
 ### 架构与核心模块（执行器）
 
 - 模块位置：`src/app/core/tool_executor.py`

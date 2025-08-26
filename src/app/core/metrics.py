@@ -129,3 +129,16 @@ DOWNLOAD_RUNNING = Gauge(
     "Number of concurrent download requests in progress",
     labelnames=("collection", "gzip", "tenant"),
 )
+
+# --- DB Query (read-only templates) ---
+DB_QUERY_SECONDS = Histogram(
+    "db_query_duration_seconds",
+    "Time spent executing DB read-only template queries",
+    labelnames=("template", "tenant"),
+)
+
+DB_QUERY_TOTAL = Counter(
+    "db_query_total",
+    "Number of DB read-only template queries by result",
+    labelnames=("template", "tenant", "result"),  # result: ok|rejected|timeout|error
+)
