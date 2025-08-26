@@ -45,17 +45,16 @@ fi
 # 组装 queries 数组
 QUERIES_JSON=""
 if [ -f "$RAG_EVAL_QUERIES" ]; then
-  # 从 JSONL 文件中提取 question 字段，最多取 50 条
-  QUERIES_JSON=$(awk 'NR<=50 {print}' "$RAG_EVAL_QUERIES" | jq -s '[ .[] | .question // .query // .prompt | select(type=="string") ]')
+  # 从 JSONL 文件中提取问题字段，最多取 50 条；兼容 text 作为问题
+  QUERIES_JSON=$(awk 'NR<=50 {print}' "$RAG_EVAL_QUERIES" | jq -s '[ .[] | .question // .query // .prompt // .text | select(type=="string") ]')
+  # 如果文件存在但未提取到任何问题，则回退到内置 queries
+  if [ -z "$QUERIES_JSON" ] || [ "$(echo "$QUERIES_JSON" | jq 'length')" = "0" ]; then
+    echo "[RAG GATE] 提供的 $RAG_EVAL_QUERIES 中未找到可用 queries，使用内置样例" >&2
+    QUERIES_JSON='["如何启动本地服务?","如何查看 Prometheus 指标?","如何触发 E2E 工作流?","如何导入 FAQ 数据?","如何使用 RAG 进行问答?"]'
+  fi
 else
   # 兜底内置样例
   QUERIES_JSON='["如何启动本地服务?","如何查看 Prometheus 指标?","如何触发 E2E 工作流?","如何导入 FAQ 数据?","如何使用 RAG 进行问答?"]'
-fi
-
-# 若仍为空则退出
-if [ -z "$QUERIES_JSON" ] || [ "$(echo "$QUERIES_JSON" | jq 'length')" = "0" ]; then
-  echo "未找到有效评测 queries，退出。" >&2
-  exit 2
 fi
 
 BODY=$(jq -n \

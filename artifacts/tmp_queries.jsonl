@@ -1,0 +1,12 @@
+{"question":"如何启动本地服务?"}
+{"question":"如何查看 Prometheus 指标?"}
+{"question":"如何触发 E2E 工作流?"}
+{"question":"如何导入 FAQ 数据?"}
+{"question":"如何使用 RAG 进行问答?"}
+{"question":"如何配置 Qdrant 集合?"}
+{"question":"如何准备 demo 嵌入数据?"}
+{"question":"如何处理嵌入维度不匹配?"}
+{"question":"如何调用 /api/v1/ask 接口?"}
+{"question":"如何查看 /metrics 暴露的指标?"}
+{"question":"如何调整 num_predict 以避免超时?"}
+{"question":"如何排查 RAG 500 错误?"}

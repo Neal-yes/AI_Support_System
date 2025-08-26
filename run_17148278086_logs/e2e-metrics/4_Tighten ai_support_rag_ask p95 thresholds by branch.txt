@@ -1,0 +1,27 @@
+﻿2025-08-22T06:49:32.2080323Z ##[group]Run set -euo pipefail
+2025-08-22T06:49:32.2080929Z [36;1mset -euo pipefail[0m
+2025-08-22T06:49:32.2081404Z [36;1mBRANCH="${GITHUB_REF_NAME}"[0m
+2025-08-22T06:49:32.2081881Z [36;1mecho "Branch: $BRANCH"[0m
+2025-08-22T06:49:32.2082327Z [36;1m[0m
+2025-08-22T06:49:32.2082708Z [36;1mLLM_P95="2.0"[0m
+2025-08-22T06:49:32.2083122Z [36;1mRAG_P95="1.0"[0m
+2025-08-22T06:49:32.2083746Z [36;1mcase "$BRANCH" in[0m
+2025-08-22T06:49:32.2084386Z [36;1m  release/*)[0m
+2025-08-22T06:49:32.2084848Z [36;1m    # Release: more strict p95 thresholds[0m
+2025-08-22T06:49:32.2085574Z [36;1m    LLM_P95="1.5"[0m
+2025-08-22T06:49:32.2086006Z [36;1m    RAG_P95="0.8"[0m
+2025-08-22T06:49:32.2086428Z [36;1m    ;;[0m
+2025-08-22T06:49:32.2086804Z [36;1m  *) ;;[0m
+2025-08-22T06:49:32.2087205Z [36;1mesac[0m
+2025-08-22T06:49:32.2087586Z [36;1m[0m
+2025-08-22T06:49:32.2088013Z [36;1mfile="configs/rules/ai_support_rules.yml"[0m
+2025-08-22T06:49:32.2088637Z [36;1mecho "Setting LLM p95 to ${LLM_P95}, RAG p95 to ${RAG_P95} in ${file}"[0m
+2025-08-22T06:49:32.2089368Z [36;1m# Only modify the two RAG/ASK related rules by matching metric names[0m
+2025-08-22T06:49:32.2090119Z [36;1msed -i -E "s/(llm_generate_duration_seconds_bucket.*> )[0-9.]+/\1${LLM_P95}/" "$file"[0m
+2025-08-22T06:49:32.2090903Z [36;1msed -i -E "s/(rag_retrieval_duration_seconds_bucket.*> )[0-9.]+/\1${RAG_P95}/" "$file"[0m
+2025-08-22T06:49:32.2133698Z shell: /usr/bin/bash -e {0}
+2025-08-22T06:49:32.2134245Z ##[endgroup]
+2025-08-22T06:49:32.2199063Z Branch: main
+2025-08-22T06:49:32.2199657Z Setting LLM p95 to 2.0, RAG p95 to 1.0 in configs/rules/ai_support_rules.yml
+2025-08-22T06:49:32.2212459Z sed: can't read configs/rules/ai_support_rules.yml: No such file or directory
+2025-08-22T06:49:32.2226036Z ##[error]Process completed with exit code 2.

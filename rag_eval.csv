@@ -1,0 +1,7 @@
+query,has_match,top1_score,mean_score,count
+如何登录？,True,0.870595,0.845334,2
+忘记密码怎么办？,True,0.852201,0.838373,2
+发票如何开具？,True,0.772850,0.713219,2
+
+collection,total,hit_ratio,avg_top1,avg_mean_score,top_k
+demo,3,1.000000,0.831882,0.798975,3

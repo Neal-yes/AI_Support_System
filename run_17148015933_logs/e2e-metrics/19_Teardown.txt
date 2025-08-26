@@ -1,0 +1,5 @@
+﻿2025-08-22T06:35:00.8470259Z ##[group]Run docker-compose -f docker-compose.yml down -v || true
+2025-08-22T06:35:00.8471135Z [36;1mdocker-compose -f docker-compose.yml down -v || true[0m
+2025-08-22T06:35:00.8512793Z shell: /usr/bin/bash -e {0}
+2025-08-22T06:35:00.8513285Z ##[endgroup]
+2025-08-22T06:35:00.8575684Z /home/runner/work/_temp/88375e06-032e-41cf-9a7e-055d94fc383e.sh: line 1: docker-compose: command not found

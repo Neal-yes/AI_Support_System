@@ -110,23 +110,41 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
             "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "matches": 0},
         }
 
-    t_ret = time.monotonic()
-    scored = qcli.search_vectors(coll, query=qvecs[0], top_k=top_k, filters=req.filters)
-    RAG_RETRIEVAL_SECONDS.labels(collection=coll).observe(max(time.monotonic() - t_ret, 0.0))
+    # Retrieval
+    try:
+        t_ret = time.monotonic()
+        scored = qcli.search_vectors(coll, query=qvecs[0], top_k=top_k, filters=req.filters)
+        RAG_RETRIEVAL_SECONDS.labels(collection=coll).observe(max(time.monotonic() - t_ret, 0.0))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"rag retrieval failed: {e}")
 
     contexts, sources = _prepare_contexts(scored)
+    if not contexts:
+        # No usable contexts; return graceful response without LLM call
+        RAG_MATCHES_TOTAL.labels(collection=coll, has_match="false").inc()
+        return {
+            "response": "未在文档中找到相关信息",
+            "sources": [],
+            "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "top_k": top_k, "match": False},
+        }
+
     prompt = _build_prompt(req.query, contexts)
 
+    # Generation
     opts: Dict[str, Any] = dict(req.options or {})
     if "num_predict" not in opts:
         opts["num_predict"] = settings.DEFAULT_NUM_PREDICT
-    t_gen = time.monotonic()
-    resp = await ollama.generate(
-        prompt,
-        model=req.model or settings.OLLAMA_MODEL,
-        **opts,
-    )
-    LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t_gen, 0.0))
+    try:
+        t_gen = time.monotonic()
+        resp = await ollama.generate(
+            prompt,
+            model=req.model or settings.OLLAMA_MODEL,
+            **opts,
+        )
+        LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t_gen, 0.0))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"rag generation failed: {e}")
+
     RAG_MATCHES_TOTAL.labels(collection=coll, has_match=str(bool(scored)).lower()).inc()
 
     return {

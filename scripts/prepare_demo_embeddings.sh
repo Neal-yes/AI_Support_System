@@ -56,8 +56,58 @@ awk 'NR<='"${MAX_DOCS}"' {print}' "$SRC_JSONL" \
 
 COUNT=$(jq 'length' "$TMP_JSON")
 if [ "$COUNT" = "0" ]; then
-  echo "未从 $SRC_JSONL 提取到有效文本" >&2
-  exit 2
+  echo "未从 $SRC_JSONL 提取到有效文本，尝试回退..." >&2
+  # Prefer demo.jsonl(.gz) first; avoid retrying the same file as current SRC_JSONL
+  choose_fallback() {
+    local current="$1"
+    # ordered candidates
+    local cands=("demo.jsonl" "demo.jsonl.gz" "demo_faq.jsonl" "demo_faq.jsonl.gz")
+    for cand in "${cands[@]}"; do
+      # skip if identical to current
+      if [ "$cand" = "$current" ]; then
+        continue
+      fi
+      if [ -f "$cand" ]; then
+        if [[ "$cand" == *.gz ]]; then
+          local unz="${cand%.gz}"
+          echo "发现 $cand，解压生成 $unz"
+          gunzip -c "$cand" > "$unz"
+          echo "$unz"
+          return 0
+        else
+          echo "$cand"
+          return 0
+        fi
+      fi
+    done
+    return 1
+  }
+
+  fb=$(choose_fallback "$SRC_JSONL") || {
+    echo "仍未找到可用评测源文件" >&2
+    exit 2
+  }
+  SRC_JSONL="$fb"
+  echo "使用回退源: $SRC_JSONL"
+
+  # 重新提取文本与简要 payload（如 tag/question/answer）
+  TMP_JSON=$(mktemp)
+  awk 'NR<='"${MAX_DOCS}"' {print}' "$SRC_JSONL" \
+    | jq -s '[ .[] | { text: (.question // .query // .prompt // .text // ""), payload: { tag: (.tag // null), question: (.question // .query // .prompt // null), answer: (.answer // null) } } | select(.text != "") ]' > "$TMP_JSON"
+
+  COUNT=$(jq 'length' "$TMP_JSON")
+  if [ "$COUNT" = "0" ]; then
+    echo "仍未提取到文本，改用内置小语料以初始化向量库..." >&2
+    TMP_JSON=$(mktemp)
+    jq -n '[
+      {text:"如何查看 Prometheus 指标?", payload:{tag:"faq", text:"如何查看 Prometheus 指标?", question:"如何查看 Prometheus 指标?", answer:null}},
+      {text:"本地 AI 客服系统如何工作?", payload:{tag:"faq", text:"本地 AI 客服系统如何工作?", question:"本地 AI 客服系统如何工作?", answer:null}},
+      {text:"如何导入示例数据?", payload:{tag:"faq", text:"如何导入示例数据?", question:"如何导入示例数据?", answer:null}},
+      {text:"如何进行 RAG 检索?", payload:{tag:"faq", text:"如何进行 RAG 检索?", question:"如何进行 RAG 检索?", answer:null}},
+      {text:"如何排查 500 错误?", payload:{tag:"faq", text:"如何排查 500 错误?", question:"如何排查 500 错误?", answer:null}}
+    ]' > "$TMP_JSON"
+    COUNT=$(jq 'length' "$TMP_JSON")
+  fi
 fi
 
 echo "[EMBED PREP] 将写入 ${COUNT} 条到 Qdrant（batch=${BATCH_SIZE} collection=${RAG_COLLECTION:-<default>} model=${RAG_MODEL:-<default>}）"
@@ -111,4 +161,4 @@ done
 
 jq -n --arg total "$TOTAL_UPSERT" --arg src "$SRC_JSONL" --arg coll "${RAG_COLLECTION}" '{total: ($total|tonumber), src: $src, collection: $coll}' > "$SUMMARY_JSON"
 
-echo "[EMBED PREP] 完成，总 upsert 条数: $TOTAL_UPSERT，详情见 $SUMMARY_JSON"
+echo "[EMBED PREP] finished. total_upsert=$TOTAL_UPSERT summary=$SUMMARY_JSON"

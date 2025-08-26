@@ -1,0 +1,30 @@
+﻿2025-08-22T06:54:35.7919285Z Current runner version: '2.328.0'
+2025-08-22T06:54:35.7943729Z ##[group]Runner Image Provisioner
+2025-08-22T06:54:35.7944649Z Hosted Compute Agent
+2025-08-22T06:54:35.7945192Z Version: 20250818.377
+2025-08-22T06:54:35.7945747Z Commit: 3c593e9f75fe0b87e893bca80d6e12ba089c61fc
+2025-08-22T06:54:35.7946512Z Build Date: 2025-08-18T14:52:18Z
+2025-08-22T06:54:35.7947051Z ##[endgroup]
+2025-08-22T06:54:35.7947569Z ##[group]Operating System
+2025-08-22T06:54:35.7948177Z Ubuntu
+2025-08-22T06:54:35.7948614Z 24.04.2
+2025-08-22T06:54:35.7949074Z LTS
+2025-08-22T06:54:35.7949515Z ##[endgroup]
+2025-08-22T06:54:35.7950037Z ##[group]Runner Image
+2025-08-22T06:54:35.7950533Z Image: ubuntu-24.04
+2025-08-22T06:54:35.7951063Z Version: 20250818.1.0
+2025-08-22T06:54:35.7952348Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20250818.1/images/ubuntu/Ubuntu2404-Readme.md
+2025-08-22T06:54:35.7953715Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20250818.1
+2025-08-22T06:54:35.7954992Z ##[endgroup]
+2025-08-22T06:54:35.7956044Z ##[group]GITHUB_TOKEN Permissions
+2025-08-22T06:54:35.7957827Z Contents: read
+2025-08-22T06:54:35.7958328Z Metadata: read
+2025-08-22T06:54:35.7958883Z Packages: read
+2025-08-22T06:54:35.7959428Z ##[endgroup]
+2025-08-22T06:54:35.7961331Z Secret source: Actions
+2025-08-22T06:54:35.7962642Z Prepare workflow directory
+2025-08-22T06:54:35.8279712Z Prepare all required actions
+2025-08-22T06:54:35.8317304Z Getting action download info
+2025-08-22T06:54:36.1450642Z Download action repository 'actions/checkout@v4' (SHA:08eba0b27e820071cde6df949e0beb9ba4906955)
+2025-08-22T06:54:36.2158050Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2025-08-22T06:54:36.4052464Z Complete job name: e2e-metrics

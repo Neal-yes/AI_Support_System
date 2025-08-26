@@ -1,0 +1,6 @@
+﻿2025-08-22T06:36:01.3062090Z ##[group]Run docker-compose version
+2025-08-22T06:36:01.3062836Z [36;1mdocker-compose version[0m
+2025-08-22T06:36:01.3130860Z shell: /usr/bin/bash -e {0}
+2025-08-22T06:36:01.3131377Z ##[endgroup]
+2025-08-22T06:36:01.3221779Z /home/runner/work/_temp/8bb9e483-98b6-40f7-9f87-a1db9635077a.sh: line 1: docker-compose: command not found
+2025-08-22T06:36:01.3237271Z ##[error]Process completed with exit code 127.

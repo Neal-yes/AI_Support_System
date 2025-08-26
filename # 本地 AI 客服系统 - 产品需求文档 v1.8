@@ -1,0 +1,318 @@
+# 本地 AI 客服系统 - 产品需求文档 v1.8
+
+更新时间：2025-08-12  
+本版本目标：去冗余、强一致、可引用。带“唯一规范源”的章节为标准源，其余章节仅引用不重复。
+
+---
+
+## 1. 产品概述与目标
+- 定位：面向企业内部本地部署的 AI 客服/助手，提供安全、可控、可审计的问答、知识检索与受控工具调用。
+- 目标：
+  - 提升一次解决率与响应速度，降低人工负担
+  - 强权限与数据范围控制，保证安全与合规
+  - 低门槛配置、版本化发布与可回滚
+  - 完整可观测与审计留痕
+- 成功度量（示例）：
+  - 平均响应时延 P95 ≤ 2s（缓存命中场景）
+  - 一次解决率 ≥ 70%，人工转接率 ≤ 15%
+  - 配置回滚用时 ≤ 2 分钟
+
+---
+
+## 2. 核心用户与场景
+- 用户：
+  - 管理员（Admin）：工具/权限/发布、审计与告警、组织与主数据
+  - 业务同学（文档维护者）：知识文档、SOP、公告维护
+  - 最终用户（End User）：对话检索、查看引用、执行受控查询
+- 场景：
+  - 知识问答与文档检索（带出处）
+  - 工单/流程指引（SOP）
+  - 内部工具只读查询（HTTP 工具、DB 查询模板）
+  - 运营审计、问题追踪与回滚
+
+---
+
+## 3. 架构与技术栈
+- 架构总览：
+  - 前台：Web 对话界面（版本固定展示）、个人偏好（引用/工具摘要显隐）
+  - 后台：配置中心、组织与主数据、版本与发布、工具治理、审计与可观测、告警
+  - 工具治理层：受控网关（/tools/invoke），统一执行/校验/投影/脱敏/权限过滤/缓存/限流/重试/熔断
+  - 配置中心：草稿/校验/灰度/全量/回滚；版本化与对比
+  - 数据与审计：主数据、日志/告警、trace_id 关联
+- 技术栈：
+  - 后端：FastAPI（Python 3.11）
+  - LLM：Qwen2.5-7B/14B Instruct（llama.cpp/Ollama + Metal）
+  - 向量库：Qdrant（Docker，arm64）
+  - 嵌入：bge-m3 / bge-small-zh
+  - OCR：PaddleOCR
+  - 前端：Vue 3 + Vite + TS + Element Plus + Pinia（Admin）；Gradio（M0）；Vue Chat（M1）
+  - 部署：Docker Compose（arm64/x86_64）
+
+---
+
+## 4. 权限模型（总览）
+- 实体：角色、用户、项目、部门；角色绑定数据范围（项目/部门），用户可叠加/覆盖
+- 执行层：检索与工具调用强制数据范围过滤与字段投影/脱敏
+- 审计：所有调用含 user_id、roles、projects[]、departments[]、trace_id、tenant_id、config_version、结果（通过/拒绝/熔断）
+
+---
+
+## 5. 工具治理（唯一规范源）
+> 本章为工具相关规范的唯一来源，其他章节引用本章。
+
+### 5.1 HTTP 工具
+- 字段：name、method、url_template、target_domain、headers（密钥占位）、allowed_hosts、request_schema、response_schema
+- 策略：缓存 TTL、限流、并发上限、重试（退避/抖动）、熔断阈值/恢复、超时
+- 安全：入参校验、字段白名单投影/脱敏、域名与路径白名单、恶意内容剔除
+
+### 5.2 DB_QUERY 模板
+- 只读策略：仅参数化 SELECT、禁 DML/DDL/注释/危险关键字
+- 安全与性能：只读视图、EXPLAIN 审核、最大行数、超时、权限范围过滤
+- Schema：request_schema、response_schema；输出稳定性要求
+
+### 5.3 执行与测试台
+- 沙箱执行与校验；展示经校验/投影/脱敏/权限过滤后的响应
+- 工具筛选：类型、方法/视图、启用状态、版本
+
+### 5.4 去重与预算
+- singleflight 键：hash(tenant_id, tool_type, tool_name, normalized_params)
+- 预算：请求并发/调用次数/超时预算与降级策略
+
+> 注：字段/按钮“!”说明与筛选框行为，统一遵循第10章。
+
+---
+
+## 6. 文档管理
+- 类型（中文枚举）：流程（SOP）、制度规范、常见问答、知识库条目、表单模板、公告
+- 用途：分类检索、权限与投影/脱敏策略差异化
+- 列表筛选：类型、项目、部门、状态（上线/下线）、关键字
+- 交互与说明：遵循第10章
+
+---
+
+## 7. 组织与主数据
+### 7.1 部门管理
+- 必填：公司*、部门名称*、状态*；校验：名称唯一（同公司）、编码唯一（如填写）
+- 操作：新建/编辑/停用/合并/拆分/上下级调整/导入导出
+- 列表筛选：组织、区域、大区、项目、状态、关键字
+- 交互与说明：遵循第10章
+
+### 7.2 项目管理（独立域，提供组织视图联动）
+- 组织视图：项目×部门联动、批量授权、同步至角色/用户数据范围
+- 列表筛选与说明：遵循第10章
+
+---
+
+## 8. 配置版本化与发布（唯一规范源）
+> 本章为版本化与发布的唯一来源，其他章节只引用不重复描述。
+
+### 8.1 版本流程与状态机
+- 流程：Draft → Validated（Schema/越权扫描）→ Gray（环境/用户范围）→ Live → RolledBack/Archived
+- 请求内快照：同一请求内固定使用同一 config_version，避免处理中途切换
+- 热更新与缓存：内存缓存（tools/roles/ACL/SQL 模板）+ Redis Pub/Sub 或 DB 变更流；按发布版本触发热刷新
+
+### 8.2 前台一致性
+- 所有前台页面右上角固定显示“版本号：Vx.y.z”，与已发布版本同步；点击显示配置摘要与历史（只读）
+
+### 8.3 版本对比与回滚
+- 字段级 diff，高亮新增/修改/删除；范围支持单工具/全量配置/策略项；一键回滚
+
+> Mermaid 状态机见“附图 A”。
+
+---
+
+## 9. 前台体验
+- 版本号展示：引用第8章（统一规则）
+- 引用与工具摘要：系统默认显隐可在“系统设置-界面偏好”设置，用户个人偏好可覆盖（遵循第10章表单规范）
+- 错误/越权提示：对话气泡中给出用户友好文案；技术细节入审计日志/诊断
+
+---
+
+## 10. 表单与交互规范（唯一规范源）
+### 10.1 必填与可选
+- 必填用“*”与红色边框；提交时逐项友好错误提示
+
+### 10.2 字段/按钮说明（“!”）
+- 右侧圆形“!”图标；悬浮（桌面）/长按或点击（移动）显示
+- 内容：精简说明 + 示例（必要）+ 风险提示（影响发布/安全）
+- 文案纳入配置版本化，支持多语言（默认中文）
+
+### 10.3 筛选框规范
+- 常用筛选默认展开，高级筛选可折叠；支持重置与保存常用方案
+
+---
+
+## 11. 运维与可观测（含 NFR/SLO）
+- 告警规则：条件（错误率、熔断、超时异常、QPS 异常、缓存命中骤降）→ 动作（通知/回调/自动处置）；编辑/克隆/停用
+- 审计日志：时间、user_id、roles、data_scope、action、result、trace_id、tenant_id、config_version、reason_code
+- NFR/SLO：
+  - 可用性目标、RTO/RPO、备份与恢复演练频率
+  - 吞吐/并发/容量基线与压测方法
+  - 灰度/回滚时延目标（回滚 ≤ 2 分钟）
+
+### 11.1 评测与回归（评测集）
+- 目标：将发布前后的质量变化量化并设为门禁，防止回归。
+- 评测集（唯一规范源）：由若干样本组成，每条样本包含
+  - query（问题）、expected_answer 或 rubric（期望或判分要点）
+  - context（tenant_id、user_context：roles/projects/departments）
+  - labels/intent、check_type（contains/rubric/deny/citations）
+  - 元数据：样本来源（审计 trace_id）、last_updated、owner
+- 功能：
+  - 管理：新增/导入（CSV/JSON）/编辑/归档/搜索/标签管理
+  - 运行：选择评测集与配置版本，运行评测；携带 tenant/user_context，严格对齐线上策略（第5章与第8章）
+  - 报告：总体分数、命中率/忠实度/拒答正确率/引用正确性；错误样本清单（可跳转审计）
+  - 门禁：与“版本与发布”联动，未达阈值阻断发布（阈值可配置）
+- 交互约定：
+  - 在线错答样本一键加入评测集（带上 trace_id、config_version）
+  - 评测集不直接影响在线回答；若需修正答案，应在“文档管理（第6章）/工具治理（第5章）”修改并发布
+
+---
+
+## 12. 恶意攻击与滥用防护
+- 网关级：IP/用户/租户限流与并发阈值；突增熔断/退避；签名/时间戳/重放保护（nonce）；来源白名单；请求体大小限制、统一超时、幂等键
+- 应用级：敏感词/PII 检测打码（入/出）；Prompt Injection/Jailbreak 检测；DB 仅参数化 SELECT；工具响应清洗（schema 校验、字段白名单、恶意链接/脚本剔除）
+- 账户与权限：强密码/登录保护（防爆破、锁定、可选 2FA）；最小权限；临时提权审批+加强审计
+- 可观测与处置：攻击画像与黑名单；WAF 接入（Nginx/OpenResty/Cloud WAF）；告警（速率异常、熔断频次、越权拒绝暴涨）；审计含原因码
+- 密钥管理与 KMS：统一密钥存储（Vault/KMS/Keychain），服务端执行时注入，占位符传递；分环境/分租户最小权限；定期轮换与审计；Envelope Encryption；应急吊销/轮换流程
+
+> 注：执行侧的限流/重试/熔断/缓存等细节由第5章落地。时序图见“附图 B”。
+
+---
+
+## 13. API 规范（唯一规范源）
+### 13.1 通用规范
+- 认证与会话：POST /auth/login、/auth/refresh、GET /auth/me；JWT + 刷新；CSRF/同站策略
+- 路径与版本：RESTful + kebab-case 路径，版本前缀 /api/v1
+- JSON 命名：snake_case（tenant_id、trace_id、user_context、config_version）
+- OpenAPI 3.1 提供机器可读规范；错误码与原因码映射清单（含 HTTP 状态）
+- 流式响应：问答支持 SSE/Chunked；超时与断点重连策略
+- 分页/筛选：page/page_size，通用 filter 字段遵循第10章筛选约定
+
+### 13.2 关键 API 清单（示例）
+- 问答：POST /api/v1/ask
+- 工具：GET/POST/PUT/DELETE /api/v1/admin/tools，POST /api/v1/admin/tools/test，POST /api/v1/tools/invoke
+- DB 模板：纳入 /api/v1/admin/tools（type=DB_QUERY）
+- 组织：/api/v1/admin/org/projects，/api/v1/admin/org/departments
+- 权限：/api/v1/admin/roles，/api/v1/admin/users，/api/v1/admin/users/{id}/roles，/api/v1/admin/users/{id}/overrides，POST /api/v1/admin/iam/dry-run
+- 文档：/api/v1/admin/docs
+- 多租户：后台/运行时 API 接受/解析 tenant_id（头或域名）
+- 评测集与评测运行（Evals）
+  - GET/POST /api/v1/admin/evals            # 列表/创建评测集
+  - GET/PUT/DELETE /api/v1/admin/evals/{id}  # 详情/更新/删除评测集
+  - POST /api/v1/admin/evals/{id}/import     # 导入 CSV/JSON
+  - POST /api/v1/admin/evals/{id}/runs       # 触发评测运行（携带 config_version/filters）
+  - GET /api/v1/admin/eval-runs              # 评测运行列表
+  - GET /api/v1/admin/eval-runs/{run_id}     # 评测运行结果（指标/错误样本）
+
+### 13.3 错误码（示例）
+- 400_INVALID_PARAM、401_UNAUTHORIZED、403_FORBIDDEN、404_NOT_FOUND、409_CONFLICT、422_SCHEMA_FAIL、429_RATE_LIMIT、499_CLIENT_CANCEL、500_INTERNAL、503_CIRCUIT_OPEN
+- 审计 reason_code 示例：PROJECT_DENY、DEPT_DENY、FIELD_REDACTED、SCHEMA_FAIL
+
+---
+
+## 14. 端到端流程图
+> 引用第5章与第8章规范。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Frontend as 前端 Chat UI
+    participant Backend as 后端 AI 网关
+    participant RAG as 检索增强生成
+    participant Tools as 受控工具网关
+    participant LLM as 大语言模型
+
+    User->>Frontend: 输入问题
+    Frontend->>Backend: POST /api/v1/ask (问题, JWT, tenant_id)
+    Backend->>Backend: 解析 user_context 与 config_version
+    Backend->>Backend: 意图识别 (RAG vs. 工具)
+
+    alt RAG 路径
+        Backend->>RAG: 检索文档 (按租户/权限过滤)
+        RAG-->>Backend: 返回相关文档片段
+    end
+
+    alt 工具调用路径
+        Backend->>Backend: 规划工具调用
+        Backend->>Tools: POST /api/v1/tools/invoke (校验后入参)
+        Tools->>Tools: 执行 HTTP/DB 查询 (缓存/熔断等策略)
+        Tools-->>Backend: 返回结构化数据 (投影/脱敏后)
+    end
+
+    Backend->>LLM: 答案合成 (结合上下文、文档、工具结果)
+    LLM-->>Backend: 最终答案与引用
+    Backend-->>Frontend: {answer, citations, tool_summaries, redaction_flags, audit_id, tenant_id, config_version}
+    Frontend->>User: 展示回复
+```
+
+## 15. 验收标准（通用）
+- **UI 一致性**
+  - 前台右上角显示“用户”和“版本号：Vx.y.z”，展示规则与第8章一致。
+- **登录与安全**
+  - 仅支持账号+密码；多租户/SSO 开关默认关闭（若启用按第17章）。
+- **表单与说明**
+  - 所有字段与按钮右侧具备“!”说明；说明内容可配置并纳入版本化（第10章）。
+- **筛选框规范**
+  - 列表页提供常用/高级筛选、重置与保存方案（第10章）。
+- **版本化能力**
+  - 支持字段级差异高亮与回滚；请求内快照一致性（第8章）。
+- **审计可观测**
+  - 审计记录包含 trace_id、tenant_id、config_version、reason_code；可按用户/工具/时间等筛选（第11章）。
+- **API 一致性**
+  - 路由遵循 /api/v1 + kebab-case；JSON 使用 snake_case；错误码与原因码符合第13章。
+- **技术就绪门禁（DOR/DOD）**
+  - 上线前须完成对应里程碑的“技术就绪清单”，详见《Technical-Plan.md》> 第3章；完成备份/恢复与回滚演练记录。
+
+---
+
+## 16. 里程碑
+- **M1（最小可用闭环）**
+  - 能力：登录与权限、RAG ACL、HTTP 工具网关、组织与权限后台、企业微信、备份/评测
+  - 验收：见第15章
+  - 技术就绪清单：见《Technical-Plan.md》 > 3.1 M1 就绪清单
+
+- **M1.5（关键增强）**
+  - 能力：DB 查询配置（执行器/模板/版本化/自测/审计）、首批模板、复合工具链路
+  - 验收：见第15章
+  - 技术就绪清单：见《Technical-Plan.md》 > 3.2 M1.5 就绪清单
+
+- **M2（规模化与治理）**
+  - 能力：权限增强（ABAC/层级/列级脱敏/临时提权/策略引擎）、自动回归评测、Vue Chat 完整版、强隔离多租户
+  - 验收：见第15章
+  - 技术就绪清单：见《Technical-Plan.md》 > 3.3 M2 就绪清单
+
+---
+
+## 17. SaaS（多租户）部署设计（可选启用）
+> 本章为多租户唯一规范源；其他章节只引用。
+
+- **租户识别**
+  - 域名或请求头 X-Tenant-ID；JWT 含 tenant_id。
+- **数据隔离**
+  - 表含 tenant_id 或独立 schema；Qdrant collection 分租户；文件/缓存分租户前缀。
+- **权限与组织**
+  - 每租户独立项目/部门/角色/用户。
+- **工具与密钥**
+  - 每租户独立工具配置与密钥；租户级限流/配额；审计包含租户维度。
+- **计量/计费（可选）**
+  - 租户级调用与用量统计。
+- **合规与回归**
+  - 全链路传递与校验 tenant_id；日志/审计包含租户维度；租户级限流与配额；越权自动化回归。
+
+---
+
+## 18. 数据字典与术语/命名规范（唯一规范源）
+- **枚举字典**
+  - 区域/大区
+  - 文档类型（流程SOP、制度规范、常见问答、知识库条目、表单模板、公告）
+  - 状态（启用/停用、上线/下线）
+  - 告警级别
+  - 语义化版本（x.y.z）
+- **JSON 字段命名**
+  - 统一使用 snake_case：tenant_id、trace_id、user_context、config_version。
+- **工具类型枚举**
+  - 大写下划线：HTTP、DB_QUERY、COMPOSITE。
+- **术语一致性**
+  - 统一使用 trace_id（不混用 TraceID）；CORS/CSP/CSRF 写法一致。
+- **API 路径风格**
+  - kebab-case + 前缀 /api/v1（示例：/api/v1/admin/tools、/api/v1/tools/invoke）。

@@ -1,0 +1,5 @@
+﻿2025-08-22T06:49:29.8726473Z ##[group]Run docker compose version
+2025-08-22T06:49:29.8727157Z [36;1mdocker compose version[0m
+2025-08-22T06:49:29.8808446Z shell: /usr/bin/bash -e {0}
+2025-08-22T06:49:29.8808942Z ##[endgroup]
+2025-08-22T06:49:32.2013147Z Docker Compose version v2.38.2
