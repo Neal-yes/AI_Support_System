@@ -33,9 +33,22 @@ jobs:
 
       - name: RAG evaluation gate
         env:
-          GATE_MIN_TOTAL: "5"
+          # M1 基线阈值（技术计划 2.10，门禁仅包含已实现的指标）
+          GATE_HIT_RATIO_MIN: "0.60"
+          GATE_AVG_TOP1_MIN: "0.35"
+          GATE_STRICT: "both"
+          GATE_MIN_TOTAL: "10"
           GATE_REQUIRE_MIN_TOTAL: "0"
           RAG_EVAL_QUERIES: demo.jsonl
           RAG_TOP_K: "5"
         run: |
           bash scripts/rag_eval_gate.sh
+
+      - name: Upload metrics artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-and-reports
+          path: |
+            artifacts/metrics/*
+          if-no-files-found: ignore
