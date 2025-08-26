@@ -310,6 +310,19 @@ jobs:
         run: |
           bash "$GITHUB_WORKSPACE/scripts/backup_qdrant_collection.sh"
 
+      - name: List metrics artifacts before upload
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "Listing artifacts/metrics before upload:" 
+          ls -la artifacts/metrics || true
+          echo "Printing ask_* if present (first 200 lines):"
+          for f in artifacts/metrics/ask_*.json; do
+            [ -f "$f" ] && echo "--- $f ---" && sed -n '1,200p' "$f"; done || true
+          echo "Printing metrics probe files if present:" 
+          for f in artifacts/metrics/metrics_*_probe.txt; do
+            [ -f "$f" ] && echo "--- $f ---" && sed -n '1,120p' "$f"; done || true
+
       - name: Upload metrics artifacts
         if: always()
         uses: actions/upload-artifact@v4
