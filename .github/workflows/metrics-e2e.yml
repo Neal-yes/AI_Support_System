@@ -29,13 +29,18 @@ on:
 jobs:
   e2e-metrics:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           lfs: true
+
+      - name: Ensure artifacts directory exists
+        run: |
+          mkdir -p artifacts/metrics
+          echo "run_id=${{ github.run_id }} attempt=${{ github.run_attempt }}" > artifacts/metrics/_run_info.txt
 
       - name: Debug working directory
         run: |
@@ -99,6 +104,12 @@ jobs:
         run: |
           docker compose -f docker-compose.yml pull || true
           docker compose -f docker-compose.yml up -d api prometheus grafana redis qdrant alertmanager ollama
+
+      - name: Debug after start stack (on failure)
+        if: failure()
+        run: |
+          echo "docker compose ps:" && docker compose -f docker-compose.yml ps || true
+          echo "docker compose logs (tail 200):" && docker compose -f docker-compose.yml logs --no-color --tail=200 || true
 
       - name: Wait for services
         run: |
@@ -224,6 +235,22 @@ jobs:
         run: |
           bash "$GITHUB_WORKSPACE/scripts/prepare_demo_embeddings.sh"
 
+      - name: Warm up ask API (non-blocking)
+        run: |
+          set +e
+          mkdir -p artifacts/metrics
+          echo "Warming up /api/v1/ask with small generate..."
+          body='{"query":"你好","use_rag":false,"options":{"num_predict":16}}'
+          http=$(curl -sS --fail-with-body --connect-timeout 5 --max-time 60 \
+            -o artifacts/metrics/warmup.json \
+            -w "%{http_code}" \
+            -H 'Content-Type: application/json' \
+            -d "$body" \
+            http://localhost:8000/api/v1/ask)
+          echo "warmup http=$http"
+          # do not fail the job on warmup
+          true
+
       - name: Smoke test unified ask API
         env:
           MODEL: ${{ env.MODEL_SMALL }}
@@ -334,8 +361,8 @@ jobs:
           path: artifacts/metrics
           if-no-files-found: warn
 
-      - name: Dump docker logs on failure
-        if: failure()
+      - name: Dump docker logs on failure or cancel
+        if: failure() || cancelled()
         run: |
           docker ps -a
           docker compose -f docker-compose.yml logs --no-color --tail=200
