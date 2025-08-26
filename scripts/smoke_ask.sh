@@ -38,6 +38,7 @@ if [ $rc1 -ne 0 ] || [ "$hc1" != "200" ]; then
   hc1=$(call_once "$plain_body" "$OUT_DIR/ask_plain.json"); rc1=$?
   echo "[SMOKE] plain attempt#2 result: rc=$rc1 http=$hc1" >&2
 fi
+echo "rc=$rc1 http=$hc1" > "$OUT_DIR/ask_plain.status" || true
 
 hc2=$(call_once "$rag_body" "$OUT_DIR/ask_rag.json"); rc2=$?
 if [ $rc2 -ne 0 ] || [ "$hc2" != "200" ]; then
@@ -49,6 +50,7 @@ if [ $rc2 -ne 0 ] || [ "$hc2" != "200" ]; then
   hc2=$(call_once "$rag_body" "$OUT_DIR/ask_rag.json"); rc2=$?
   echo "[SMOKE] rag attempt#2 result: rc=$rc2 http=$hc2" >&2
 fi
+echo "rc=$rc2 http=$hc2" > "$OUT_DIR/ask_rag.status" || true
 set -e
 
 if [ $rc1 -ne 0 ] || [ "$hc1" != "200" ]; then
