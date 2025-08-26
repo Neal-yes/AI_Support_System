@@ -21,9 +21,32 @@ if ! have_jq; then
   exit 2
 fi
 
+# Ensure SRC_JSONL exists with fallbacks
 if [ ! -f "$SRC_JSONL" ]; then
-  echo "找不到评测源文件: $SRC_JSONL" >&2
-  exit 2
+  echo "找不到评测源文件: $SRC_JSONL，尝试回退..." >&2
+  # Try gz counterpart
+  if [ -f "${SRC_JSONL}.gz" ]; then
+    echo "发现压缩文件 ${SRC_JSONL}.gz，解压生成 ${SRC_JSONL}"
+    gunzip -c "${SRC_JSONL}.gz" > "$SRC_JSONL"
+  # Try demo.jsonl family in repo root
+  elif [ -f "demo_faq.jsonl" ]; then
+    SRC_JSONL="demo_faq.jsonl"
+    echo "使用回退源: $SRC_JSONL"
+  elif [ -f "demo_faq.jsonl.gz" ]; then
+    echo "发现 demo_faq.jsonl.gz，解压生成 demo_faq.jsonl"
+    gunzip -c "demo_faq.jsonl.gz" > "demo_faq.jsonl"
+    SRC_JSONL="demo_faq.jsonl"
+  elif [ -f "demo.jsonl" ]; then
+    SRC_JSONL="demo.jsonl"
+    echo "使用回退源: $SRC_JSONL"
+  elif [ -f "demo.jsonl.gz" ]; then
+    echo "发现 demo.jsonl.gz，解压生成 demo.jsonl"
+    gunzip -c "demo.jsonl.gz" > "demo.jsonl"
+    SRC_JSONL="demo.jsonl"
+  else
+    echo "仍未找到可用评测源文件" >&2
+    exit 2
+  fi
 fi
 
 # 预处理：提取文本与简要 payload（如 tag/question/answer）
@@ -74,6 +97,8 @@ while [ $OFFSET -lt $COUNT ]; do
   if [ $RC -ne 0 ] || [ "$HTTP_CODE" != "200" ]; then
     echo "[EMBED PREP] upsert 失败: rc=$RC http=$HTTP_CODE offset=$OFFSET size=$SIZE" >&2
     sed -n '1,120p' /tmp/upsert_resp.json >&2 || true
+    # persist response for diagnostics
+    cp -f /tmp/upsert_resp.json "$OUT_DIR/upsert_resp.json" 2>/dev/null || true
     exit 1
   fi
 
