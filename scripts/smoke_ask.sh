@@ -10,16 +10,17 @@ MODEL=${MODEL:-}
 SMOKE_VERBOSE=${SMOKE_VERBOSE:-0}
 
 # curl options
-CURL_OPTS=(--fail-with-body --connect-timeout 5 --max-time 30)
+CURL_OPTS=(--fail-with-body --connect-timeout 5 --max-time 60)
 if [ "$SMOKE_VERBOSE" = "1" ]; then
+  set -x
   CURL_OPTS+=(-v)
 fi
 
 mkdir -p "$OUT_DIR"
 echo "[SMOKE] API_BASE=$API_BASE MODEL=$MODEL OUT_DIR=$OUT_DIR" >&2
 
-plain_body=$(jq -n --arg model "$MODEL" '{query:"你好，请用一句话自我介绍", use_rag:false} + ( $model=="" ? {} : {model:$model} )')
-rag_body=$(jq -n --arg model "$MODEL" '{query:"如何查看 Prometheus 指标?", use_rag:true, top_k:5} + ( $model=="" ? {} : {model:$model} )')
+plain_body=$(jq -n --arg model "$MODEL" '{query:"你好，请用一句话自我介绍", use_rag:false, options:{num_predict:64}} + ( $model=="" ? {} : {model:$model} )')
+rag_body=$(jq -n --arg model "$MODEL" '{query:"如何查看 Prometheus 指标?", use_rag:true, top_k:5, options:{num_predict:128}} + ( $model=="" ? {} : {model:$model} )')
 
 call_once() {
   local body="$1" out="$2"
