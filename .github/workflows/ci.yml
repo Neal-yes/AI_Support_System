@@ -39,10 +39,34 @@ jobs:
           GATE_STRICT: "both"
           GATE_MIN_TOTAL: "10"
           GATE_REQUIRE_MIN_TOTAL: "0"
-          RAG_EVAL_QUERIES: demo.jsonl
+          RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
           RAG_TOP_K: "5"
         run: |
           bash scripts/rag_eval_gate.sh
+
+      - name: CI Summary (RAG & Smoke)
+        if: always()
+        run: |
+          echo "## RAG Gate Summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/metrics/rag_eval.json ]; then
+            HR=$(jq -r '.summary.hit_ratio // 0' artifacts/metrics/rag_eval.json)
+            AT1=$(jq -r '.summary.avg_top1 // 0' artifacts/metrics/rag_eval.json)
+            TOT=$(jq -r '.summary.total // 0' artifacts/metrics/rag_eval.json)
+            echo "- total: ${TOT}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- hit_ratio: ${HR}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- avg_top1: ${AT1}" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f artifacts/metrics/rag_eval.csv ]; then
+              echo "- csv: artifacts/metrics/rag_eval.csv (in artifacts)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "- rag_eval.json not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "\n## Smoke Ask" >> "$GITHUB_STEP_SUMMARY"
+          P_STATUS=$(cat artifacts/metrics/ask_plain.status 2>/dev/null || echo "missing")
+          R_STATUS=$(cat artifacts/metrics/ask_rag.status 2>/dev/null || echo "missing")
+          echo "- plain: ${P_STATUS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- rag: ${R_STATUS}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload metrics artifacts
         if: always()

@@ -10,6 +10,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 import httpx
 from fastapi import HTTPException
 from prometheus_client import Counter, Histogram
+from psycopg.rows import dict_row
+from src.app.clients.postgres import get_connection
+from src.app.routers.db import validate_sql as _db_validate_sql, wrap_with_limit as _db_wrap_with_limit
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +190,8 @@ class ToolExecutor:
             return self._validate_http_get(params, options)
         if key == ("http_post", "simple") or key == ("http", "http_post"):
             return self._validate_http_post(params, options)
+        if key == ("db_query", "template") or key == ("db", "query_template"):
+            return self._validate_db_query(params, options)
         if not tool_type or not tool_name:
             raise HTTPException(status_code=400, detail="tool_type/tool_name is required")
         return {}
@@ -256,6 +261,57 @@ class ToolExecutor:
             "normalized": normalized,
         }
 
+    # --- DB_QUERY: read-only template execution ---
+    def _validate_db_query(self, params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
+        template_id = params.get("template_id")
+        tpl_params = params.get("params", {})
+        explain = params.get("explain", False)
+        if not isinstance(template_id, str) or not template_id.strip():
+            raise HTTPException(status_code=400, detail="params.template_id is required (string)")
+        if not isinstance(tpl_params, dict):
+            raise HTTPException(status_code=400, detail="params.params must be object")
+        if not isinstance(explain, (bool, type(None))):
+            raise HTTPException(status_code=400, detail="params.explain must be boolean if provided")
+        timeout_ms = options.get("timeout_ms", 3000)
+        if not isinstance(timeout_ms, int) or not (100 <= timeout_ms <= 10000):
+            raise HTTPException(status_code=400, detail="options.timeout_ms must be int in [100,10000]")
+        # optional limit override
+        max_rows = options.get("max_rows")
+        if max_rows is not None:
+            try:
+                max_rows = int(max_rows)
+                if max_rows <= 0 or max_rows > 10000:
+                    raise ValueError
+            except Exception:
+                raise HTTPException(status_code=400, detail="options.max_rows must be int in (0,10000]")
+        return {"template_id": template_id.strip(), "explain": bool(explain), "max_rows": max_rows}
+
+    async def _do_db_query(self, params: Dict[str, Any], options: Dict[str, Any], normalized: Dict[str, Any]) -> Dict[str, Any]:
+        # Router-side templates/validation ensure only SELECT; reuse helpers here
+        template_id = normalized["template_id"]
+        explain = normalized["explain"]
+        tpl_params = params.get("params", {})
+        sql = params.get("sql") or params.get("template_sql")  # allow direct sql in controlled environments (optional)
+        if not isinstance(sql, str) or not sql.strip():
+            # for gateway usage, require caller to pass sql string; in API route we use registry
+            raise HTTPException(status_code=400, detail="params.sql is required for tool gateway db_query")
+        _db_validate_sql(sql)
+        max_rows = normalized.get("max_rows") or 1000
+        final_sql = f"EXPLAIN (ANALYZE false, FORMAT TEXT) {sql}" if explain else _db_wrap_with_limit(sql, max_rows)
+        timeout_ms = int(options.get("timeout_ms", 3000))
+        async with await get_connection(timeout=timeout_ms / 1000.0) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await asyncio.wait_for(cur.execute(final_sql, tpl_params), timeout=timeout_ms / 1000.0)
+                rows = [dict(r) for r in await cur.fetchall()]
+        return {
+            "message": "db_query executed",
+            "rows": rows,
+            "row_count": len(rows),
+            "template_id": template_id,
+            "explain": explain,
+            "normalized": normalized,
+        }
+
     async def execute(self, tenant_id: str, tool_type: str, tool_name: str, params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
         # 校验与标准化
         normalized = self._validate(tool_type, tool_name, params, options)
@@ -308,6 +364,8 @@ class ToolExecutor:
                         result = await self._do_http_get(params, options, normalized)
                     elif tool_type.lower() == "http_post":
                         result = await self._do_http_post(params, options, normalized)
+                    elif (tool_type.lower(), tool_name.lower()) in (("db_query", "template"), ("db", "query_template")):
+                        result = await self._do_db_query(params, options, normalized)
                     else:
                         result = {"message": "tool invoked (validated)", "normalized": normalized}
                     # 缓存写入
