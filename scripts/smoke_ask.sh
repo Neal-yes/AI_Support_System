@@ -22,8 +22,8 @@ mkdir -p "$OUT_DIR"
 : > "$OUT_DIR/ask_rag.json"
 echo "[SMOKE] API_BASE=$API_BASE MODEL=$MODEL OUT_DIR=$OUT_DIR" >&2
 
-plain_body=$(jq -n --arg model "$MODEL" '{query:"你好，请用一句话自我介绍", use_rag:false, options:{num_predict:64}} + ( $model=="" ? {} : {model:$model} )')
-rag_body=$(jq -n --arg model "$MODEL" '{query:"如何查看 Prometheus 指标?", use_rag:true, top_k:5, options:{num_predict:128}} + ( $model=="" ? {} : {model:$model} )')
+plain_body=$(jq -n --arg model "$MODEL" '{query:"你好，请用一句话自我介绍", use_rag:false, options:{num_predict:48}} + ( $model=="" ? {} : {model:$model} )')
+rag_body=$(jq -n --arg model "$MODEL" '{query:"如何查看 Prometheus 指标?", use_rag:true, top_k:5, options:{num_predict:96}} + ( $model=="" ? {} : {model:$model} )')
 
 call_once() {
   local body="$1" out="$2"

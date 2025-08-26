@@ -319,6 +319,9 @@ jobs:
           echo "Printing ask_* if present (first 200 lines):"
           for f in artifacts/metrics/ask_*.json; do
             [ -f "$f" ] && echo "--- $f ---" && sed -n '1,200p' "$f"; done || true
+          echo "Printing ask status files if present:"
+          for f in artifacts/metrics/ask_*.status; do
+            [ -f "$f" ] && echo "--- $f ---" && sed -n '1,40p' "$f"; done || true
           echo "Printing metrics probe files if present:" 
           for f in artifacts/metrics/metrics_*_probe.txt; do
             [ -f "$f" ] && echo "--- $f ---" && sed -n '1,120p' "$f"; done || true
