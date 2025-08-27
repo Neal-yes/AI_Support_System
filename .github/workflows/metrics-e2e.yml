@@ -115,6 +115,8 @@ jobs:
         run: |
           echo "Waiting for API (http://localhost:8000/metrics)"
           for i in {1..40}; do curl -fsS http://localhost:8000/metrics && break || sleep 5; done
+          echo "Waiting for API readiness (http://localhost:8000/-/ready)"
+          for i in {1..40}; do curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:8000/-/ready | grep -E "^(200)$" && break || sleep 5; done
           echo "Waiting for Prometheus (http://localhost:9090/-/ready)"
           for i in {1..40}; do curl -fsS http://localhost:9090/-/ready && break || sleep 5; done
           echo "Waiting for Grafana (http://localhost:3000/login)"

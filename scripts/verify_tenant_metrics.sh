@@ -17,6 +17,23 @@ curl -fsS -X POST "${API_BASE}/collections/ensure" \
   -H "Content-Type: application/json" \
   -d '{"name":"'"${COL}"'","vector_size":1}' >/dev/null || true
 
+echo "0.x) Verify collection exists (retry until ready)"
+# 等待集合可用（API 需要 Qdrant 就绪）。最多重试 12 次 * 5s = 60s。
+COL_HTTP=""
+for i in {1..12}; do
+  COL_HTTP=$(curl -sS -o /dev/null -w "%{http_code}" "${API_BASE}/collections/${COL}" || true)
+  if [ "${COL_HTTP}" = "200" ]; then
+    echo "Collection '${COL}' is ready (HTTP 200)"
+    break
+  fi
+  echo "Collection not ready yet (http=${COL_HTTP}), retrying in 5s..."
+  sleep 5
+done
+if [ "${COL_HTTP:-}" != "200" ]; then
+  echo "Collection '${COL}' not ready after retries; aborting."
+  exit 1
+fi
+
 echo "0.1) Insert one demo point (no embeddings required)"
 # 生成带真实换行的 NDJSON 文本
 JSONL_LINE='{"id":1,"vector":[0.1],"payload":{"tag":"demo"}}'
