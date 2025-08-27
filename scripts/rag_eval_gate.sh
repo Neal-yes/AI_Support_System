@@ -134,6 +134,37 @@ if [ "${RAG_EXPORT_CSV}" = "1" ]; then
   fi
 fi
 
+# Generate markdown summary for Job Summary publishing
+SUMMARY_MD="${OUT_DIR}/rag_gate_summary.md"
+{
+  echo "## RAG Eval Gate"
+  echo
+  echo "- total=${TOTAL} hit_ratio=${HIT_RATIO} avg_top1=${AVG_TOP1} top_k=${RAG_TOP_K}"
+  echo "- thresholds: hit_ratio>=${GATE_HIT_RATIO_MIN} ${GATE_STRICT} avg_top1>=${GATE_AVG_TOP1_MIN} (min_total=${GATE_MIN_TOTAL} require_min_total=${GATE_REQUIRE_MIN_TOTAL})"
+  if [ -f "$CSV_OUT" ]; then
+    # Append the CSV summary footer if present
+    echo
+    echo "- csv: $(basename "$CSV_OUT")"
+    # Try to print the summary line if exists (footer)
+    tail -n 3 "$CSV_OUT" | sed -n '1,3p' || true
+  fi
+} > "$SUMMARY_MD" || true
+
+# If not pass, include diagnostics from CSV: lowest top1_score and no-match samples
+if [ $PASS -ne 1 ] && [ -f "$CSV_OUT" ]; then
+  {
+    echo
+    echo "### Diagnostics"
+    echo
+    echo "- Lowest top1_score samples (up to 5):"
+    # Skip header and possible footer, keep lines with 5 columns, then sort by 3rd column ascending numerically
+    awk -F',' 'NR==1{next} $1!~/^collection$/ && NF>=5 {print}' "$CSV_OUT" | sort -t',' -k3,3g | head -n 5 | sed 's/^/  - /'
+    echo
+    echo "- No-match samples (up to 5):"
+    awk -F',' 'NR==1{next} $2=="False" && NF>=5 {print "  - "$0}' "$CSV_OUT" | head -n 5
+  } >> "$SUMMARY_MD" || true
+fi
+
 if [ $PASS -eq 1 ]; then
   echo "[RAG GATE] PASS"
   exit 0

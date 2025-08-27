@@ -354,6 +354,30 @@ jobs:
           for f in artifacts/metrics/metrics_*_probe.txt; do
             [ -f "$f" ] && echo "--- $f ---" && sed -n '1,120p' "$f"; done || true
 
+      - name: Publish Job Summary (Smoke & RAG Gate)
+        if: always()
+        run: |
+          set +e
+          echo "# Metrics E2E Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            cat artifacts/metrics/smoke_summary.md >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Smoke: /api/v1/ask" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f artifacts/metrics/ask_plain.status ]; then
+              echo "- Plain: $(cat artifacts/metrics/ask_plain.status)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -f artifacts/metrics/ask_rag.status ]; then
+              echo "- RAG: $(cat artifacts/metrics/ask_rag.status)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f artifacts/metrics/rag_gate_summary.md ]; then
+            cat artifacts/metrics/rag_gate_summary.md >> "$GITHUB_STEP_SUMMARY"
+            echo >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload metrics artifacts
         if: always()
         uses: actions/upload-artifact@v4

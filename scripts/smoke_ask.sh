@@ -62,6 +62,49 @@ call_once() {
   curl -sS "${CURL_OPTS[@]}" -o "$out" -w "%{http_code}" -H 'Content-Type: application/json' -d "$body" "$API_BASE/api/v1/ask"
 }
 
+# Validate response JSON structure for observability (best-effort; requires jq)
+validate_plain() {
+  local file="$1"
+  if ! command -v jq >/dev/null 2>&1; then return 0; fi
+  # Must be valid JSON and meta.use_rag=false
+  if ! jq -e . "$file" >/dev/null 2>&1; then
+    echo "[SMOKE] plain: invalid JSON" >&2; return 1
+  fi
+  local use_rag
+  use_rag=$(jq -r '.meta.use_rag // empty' "$file")
+  if [ "$use_rag" != "false" ]; then
+    echo "[SMOKE] plain: meta.use_rag != false (${use_rag:-<missing>})" >&2; return 1
+  fi
+  # response non-empty string
+  local resp_len
+  resp_len=$(jq -r '.response | strings | length' "$file")
+  if [ -z "$resp_len" ] || [ "$resp_len" = "null" ] || [ "$resp_len" -lt 1 ]; then
+    echo "[SMOKE] plain: response empty" >&2; return 1
+  fi
+  return 0
+}
+
+validate_rag() {
+  local file="$1"
+  if ! command -v jq >/dev/null 2>&1; then return 0; fi
+  if ! jq -e . "$file" >/dev/null 2>&1; then
+    echo "[SMOKE] rag: invalid JSON" >&2; return 1
+  fi
+  local use_rag
+  use_rag=$(jq -r '.meta.use_rag // empty' "$file")
+  if [ "$use_rag" != "true" ]; then
+    echo "[SMOKE] rag: meta.use_rag != true (${use_rag:-<missing>})" >&2; return 1
+  fi
+  # sources should be array with at least 1 item if match=true
+  local match sources_len
+  match=$(jq -r '.meta.match // empty' "$file")
+  sources_len=$(jq -r '.sources | if type=="array" then length else 0 end' "$file")
+  if [ "$match" = "true" ] && [ "$sources_len" -lt 1 ]; then
+    echo "[SMOKE] rag: match=true but sources empty" >&2; return 1
+  fi
+  return 0
+}
+
 set +e
 hc1=$(call_once "$plain_body" "$OUT_DIR/ask_plain.json"); rc1=$?
 if [ $rc1 -ne 0 ] || [ "$hc1" != "200" ]; then
@@ -107,8 +150,33 @@ else
 fi
 set -e
 
+# Generate a brief markdown summary for Job Summary publishing
+{
+  echo "## Smoke: /api/v1/ask"
+  echo
+  echo "- Plain: rc=$rc1 http=$hc1"
+  if command -v jq >/dev/null 2>&1 && [ -s "$OUT_DIR/ask_plain.json" ]; then
+    echo "  - response_len=$(jq -r '.response | strings | length // 0' "$OUT_DIR/ask_plain.json")"
+    echo "  - use_rag=$(jq -r '.meta.use_rag // ""' "$OUT_DIR/ask_plain.json")"
+  fi
+  if [ "$SKIP_RAG" = "1" ]; then
+    echo "- RAG: skipped"
+  else
+    echo "- RAG: rc=$rc2 http=$hc2"
+    if command -v jq >/dev/null 2>&1 && [ -s "$OUT_DIR/ask_rag.json" ]; then
+      echo "  - sources_len=$(jq -r '.sources | if type=="array" then length else 0 end' "$OUT_DIR/ask_rag.json") match=$(jq -r '.meta.match // ""' "$OUT_DIR/ask_rag.json")"
+    fi
+  fi
+} > "$OUT_DIR/smoke_summary.md" || true
+
 if [ $rc1 -ne 0 ] || [ "$hc1" != "200" ]; then
   echo "ask plain smoke failed: rc=$rc1 http=$hc1" >&2
+  sed -n '1,200p' "$OUT_DIR/ask_plain.json" >&2 || true
+  exit 1
+fi
+# Additional structure validation for plain
+if ! validate_plain "$OUT_DIR/ask_plain.json"; then
+  echo "ask plain validation failed" >&2
   sed -n '1,200p' "$OUT_DIR/ask_plain.json" >&2 || true
   exit 1
 fi
@@ -116,6 +184,14 @@ if [ "$SKIP_RAG" != "1" ] && { [ $rc2 -ne 0 ] || [ "$hc2" != "200" ]; }; then
   echo "ask rag smoke failed: rc=$rc2 http=$hc2" >&2
   sed -n '1,200p' "$OUT_DIR/ask_rag.json" >&2 || true
   exit 1
+fi
+# Additional structure validation for rag
+if [ "$SKIP_RAG" != "1" ]; then
+  if ! validate_rag "$OUT_DIR/ask_rag.json"; then
+    echo "ask rag validation failed" >&2
+    sed -n '1,200p' "$OUT_DIR/ask_rag.json" >&2 || true
+    exit 1
+  fi
 fi
 echo "[SMOKE] both plain and rag succeeded: http1=$hc1 http2=$hc2" >&2
 
