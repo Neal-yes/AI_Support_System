@@ -66,6 +66,22 @@ jobs:
             exit 1
           fi
 
+          echo "[CI] Wait for Ollama service on http://localhost:11434/api/tags"
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS "http://localhost:11434/api/tags" >/dev/null 2>&1; then
+              echo "[CI] Ollama healthy (tags endpoint reachable)"
+              ok=1; break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then
+            echo "[CI] Ollama did not become healthy in time; showing logs for debugging" >&2
+            docker compose ps
+            docker compose logs --no-color --timestamps ollama || true
+            exit 1
+          fi
+
       - name: Run tests
         run: pytest -q
 
