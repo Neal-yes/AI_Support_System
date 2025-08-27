@@ -240,7 +240,8 @@ jobs:
           set +e
           mkdir -p artifacts/metrics
           echo "Warming up /api/v1/ask with small generate..."
-          body='{"query":"你好","use_rag":false,"options":{"num_predict":16}}'
+          # 指定已拉取的小模型，避免默认大模型未就绪导致 500
+          body="{\"query\":\"你好\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":16}}"
           http=$(curl -sS --fail-with-body --connect-timeout 5 --max-time 60 \
             -o artifacts/metrics/warmup.json \
             -w "%{http_code}" \

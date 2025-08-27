@@ -79,11 +79,16 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
         if "num_predict" not in opts:
             opts["num_predict"] = settings.DEFAULT_NUM_PREDICT
         t0 = time.monotonic()
-        resp = await ollama.generate(
-            req.query,
-            model=req.model or settings.OLLAMA_MODEL,
-            **opts,
-        )
+        try:
+            resp = await ollama.generate(
+                req.query,
+                model=req.model or settings.OLLAMA_MODEL,
+                **opts,
+            )
+        except Exception as e:
+            # 记录失败耗时并返回详细错误，便于 CI Smoke 调试
+            LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t0, 0.0))
+            raise HTTPException(status_code=500, detail=f"plain generation failed: {e}")
         LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t0, 0.0))
         return {
             "response": resp.get("response", ""),
