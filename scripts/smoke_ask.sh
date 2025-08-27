@@ -71,7 +71,7 @@ validate_plain() {
     echo "[SMOKE] plain: invalid JSON" >&2; return 1
   fi
   local use_rag
-  use_rag=$(jq -r '.meta.use_rag // empty' "$file")
+  use_rag=$(jq -r '.meta.use_rag // "null"' "$file")
   if [ "$use_rag" != "false" ]; then
     echo "[SMOKE] plain: meta.use_rag != false (${use_rag:-<missing>})" >&2; return 1
   fi
@@ -91,7 +91,7 @@ validate_rag() {
     echo "[SMOKE] rag: invalid JSON" >&2; return 1
   fi
   local use_rag
-  use_rag=$(jq -r '.meta.use_rag // empty' "$file")
+  use_rag=$(jq -r '.meta.use_rag // "null"' "$file")
   if [ "$use_rag" != "true" ]; then
     echo "[SMOKE] rag: meta.use_rag != true (${use_rag:-<missing>})" >&2; return 1
   fi
