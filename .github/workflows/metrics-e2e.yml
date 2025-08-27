@@ -326,7 +326,7 @@ jobs:
 
       - name: RAG eval gate (pre-deploy)
         env:
-          RAG_EVAL_QUERIES: demo_faq.jsonl
+          RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
           RAG_TOP_K: "5"
           RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
