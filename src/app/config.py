@@ -1,9 +1,15 @@
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Union, Optional
 
 
 class Settings(BaseSettings):
+    # Pydantic v2 settings config
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",  # 忽略未在 Settings 中声明的额外环境变量，避免 ValidationError
+    )
     # API
     API_PORT: int = 8000
 
@@ -50,9 +56,7 @@ class Settings(BaseSettings):
     # Multi-tenant
     HEADER_TENANT_KEY: str = "X-Tenant-Id"  # 请求头中租户字段名
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    # 旧版 pydantic v1 风格的 Config 已由上面的 model_config 取代
 
 
 class ServiceStatus(BaseModel):
