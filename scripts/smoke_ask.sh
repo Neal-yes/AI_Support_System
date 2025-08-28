@@ -157,14 +157,14 @@ set -e
   echo "- Plain: rc=$rc1 http=$hc1"
   if command -v jq >/dev/null 2>&1 && [ -s "$OUT_DIR/ask_plain.json" ]; then
     echo "  - response_len=$(jq -r '.response | strings | length // 0' "$OUT_DIR/ask_plain.json")"
-    echo "  - use_rag=$(jq -r '.meta.use_rag // ""' "$OUT_DIR/ask_plain.json")"
+    echo "  - use_rag=$(jq -r '.meta | if has("use_rag") then .use_rag else "null" end' "$OUT_DIR/ask_plain.json")"
   fi
   if [ "$SKIP_RAG" = "1" ]; then
     echo "- RAG: skipped"
   else
     echo "- RAG: rc=$rc2 http=$hc2"
     if command -v jq >/dev/null 2>&1 && [ -s "$OUT_DIR/ask_rag.json" ]; then
-      echo "  - sources_len=$(jq -r '.sources | if type=="array" then length else 0 end' "$OUT_DIR/ask_rag.json") match=$(jq -r '.meta.match // ""' "$OUT_DIR/ask_rag.json")"
+      echo "  - sources_len=$(jq -r '.sources | if type==\"array\" then length else 0 end' "$OUT_DIR/ask_rag.json") match=$(jq -r '.meta | if has(\"match\") then .match else \"null\" end' "$OUT_DIR/ask_rag.json")"
     fi
   fi
 } > "$OUT_DIR/smoke_summary.md" || true

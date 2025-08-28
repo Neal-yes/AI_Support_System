@@ -12,6 +12,12 @@ COL="default_collection"
 OUT_DIR="artifacts/metrics"
 mkdir -p "${OUT_DIR}"
 
+# Gate thresholds (tunable via env)
+# 收敛波动：采用滑动窗口指标并设置宽松但有意义的阈值；可通过 env 覆盖
+GATE_ERROR_RATIO_1M_MAX=${GATE_ERROR_RATIO_1M_MAX:-0.25}
+GATE_RATE_LIMIT_INCR_1M_MAX=${GATE_RATE_LIMIT_INCR_1M_MAX:-10}
+GATE_CIRCUIT_OPEN_INCR_5M_MAX=${GATE_CIRCUIT_OPEN_INCR_5M_MAX:-5}
+
 # Helper: robust Prometheus instant query with retries and tolerant jq
 # Usage: prom_query "<promql>" "<output_path>"
 prom_query() {
@@ -187,6 +193,87 @@ for Q in "$Q_T1" "$Q_T2" "$Q_T3" "$Q_T4" "$Q_T5" "$Q_T6" "$Q_T7"; do
   prom_query "$Q" "${OUT_DIR}/prom_tools_q${TIDX}.json"
   TIDX=$((TIDX+1))
 done
+
+# 4) 生成稳健日志与 Gate 判断摘要
+echo "4) 生成 tools_* 指标摘要与 Gate 判断"
+
+# helpers to parse prom responses safely
+parse_sum() { local f="$1"; jq -r '[.data.result[].value[1] | tonumber] | add // 0' "$f" 2>/dev/null || echo 0; }
+parse_max() { local f="$1"; jq -r '[.data.result[].value[1] | tonumber] | max // 0' "$f" 2>/dev/null || echo 0; }
+
+TOOLS_REQ_1M=$(parse_sum "${OUT_DIR}/prom_tools_q1.json")
+TOOLS_ERR_1M=$(parse_sum "${OUT_DIR}/prom_tools_q2.json")
+TOOLS_RL_1M=$(parse_sum "${OUT_DIR}/prom_tools_q3.json")
+TOOLS_CO_5M=$(parse_sum "${OUT_DIR}/prom_tools_q4.json")
+TOOLS_CACHE_1M=$(parse_sum "${OUT_DIR}/prom_tools_q5.json")
+TOOLS_RETRY_1M=$(parse_sum "${OUT_DIR}/prom_tools_q6.json")
+TOOLS_ERR_RATIO_1M=$(parse_max "${OUT_DIR}/prom_tools_q7.json")
+
+# float greater-than: returns 0 if a>b else 1
+gt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a>b)}'; }
+
+GATE_PASS=1
+FAIL_REASONS=()
+
+if gt "$TOOLS_ERR_RATIO_1M" "$GATE_ERROR_RATIO_1M_MAX"; then
+  GATE_PASS=0
+  FAIL_REASONS+=("error_ratio_1m>${GATE_ERROR_RATIO_1M_MAX} (${TOOLS_ERR_RATIO_1M})")
+fi
+if gt "$TOOLS_RL_1M" "$GATE_RATE_LIMIT_INCR_1M_MAX"; then
+  GATE_PASS=0
+  FAIL_REASONS+=("rate_limited_incr_1m>${GATE_RATE_LIMIT_INCR_1M_MAX} (${TOOLS_RL_1M})")
+fi
+if gt "$TOOLS_CO_5M" "$GATE_CIRCUIT_OPEN_INCR_5M_MAX"; then
+  GATE_PASS=0
+  FAIL_REASONS+=("circuit_open_incr_5m>${GATE_CIRCUIT_OPEN_INCR_5M_MAX} (${TOOLS_CO_5M})")
+fi
+
+# Write JSON summary
+jq -n \
+  --argjson req_1m "$TOOLS_REQ_1M" \
+  --argjson err_1m "$TOOLS_ERR_1M" \
+  --argjson rl_1m "$TOOLS_RL_1M" \
+  --argjson co_5m "$TOOLS_CO_5M" \
+  --argjson cache_1m "$TOOLS_CACHE_1M" \
+  --argjson retry_1m "$TOOLS_RETRY_1M" \
+  --arg err_ratio_1m "$TOOLS_ERR_RATIO_1M" \
+  --arg gate_error_ratio_1m_max "$GATE_ERROR_RATIO_1M_MAX" \
+  --arg gate_rate_limit_incr_1m_max "$GATE_RATE_LIMIT_INCR_1M_MAX" \
+  --arg gate_circuit_open_incr_5m_max "$GATE_CIRCUIT_OPEN_INCR_5M_MAX" \
+  --argjson pass "$GATE_PASS" \
+  --argjson reasons "$(printf '%s\n' "${FAIL_REASONS[@]:-}" | jq -R . | jq -s .)" \
+  '{
+    window: {requests_1m:$req_1m, errors_1m:$err_1m, rate_limited_1m:$rl_1m, circuit_open_5m:$co_5m, cache_hits_1m:$cache_1m, retries_1m:$retry_1m, error_ratio_1m:($err_ratio_1m|tonumber)},
+    gates: {error_ratio_1m_max:($gate_error_ratio_1m_max|tonumber), rate_limit_incr_1m_max:($gate_rate_limit_incr_1m_max|tonumber), circuit_open_incr_5m_max:($gate_circuit_open_incr_5m_max|tonumber)},
+    pass: ($pass==1),
+    reasons: ($reasons // [])
+  }' > "${OUT_DIR}/tools_summary.json" || true
+
+# Write Markdown summary for job summary/artifacts
+{
+  echo "## Tools Gateway Summary"
+  echo
+  echo "- window: requests_1m=${TOOLS_REQ_1M} errors_1m=${TOOLS_ERR_1M} error_ratio_1m=${TOOLS_ERR_RATIO_1M}"
+  echo "- rate_limited_1m=${TOOLS_RL_1M} retries_1m=${TOOLS_RETRY_1M} cache_hits_1m=${TOOLS_CACHE_1M}"
+  echo "- circuit_open_5m=${TOOLS_CO_5M}"
+  echo "- gates: error_ratio_1m_max=${GATE_ERROR_RATIO_1M_MAX} rate_limit_incr_1m_max=${GATE_RATE_LIMIT_INCR_1M_MAX} circuit_open_incr_5m_max=${GATE_CIRCUIT_OPEN_INCR_5M_MAX}"
+  if [ "$GATE_PASS" -eq 1 ]; then
+    echo "- result: PASS"
+  else
+    echo "- result: FAIL"
+    if [ ${#FAIL_REASONS[@]} -gt 0 ]; then
+      for r in "${FAIL_REASONS[@]}"; do echo "  - reason: $r"; done
+    fi
+  fi
+} > "${OUT_DIR}/tools_summary.md" || true
+
+if [ "$GATE_PASS" -ne 1 ]; then
+  echo "[GATE][FAIL] Tools Gateway gates violated:" >&2
+  cat "${OUT_DIR}/tools_summary.md" >&2 || true
+  exit 1
+else
+  echo "[GATE][PASS] Tools Gateway gates satisfied." >&2
+fi
 
 # 额外证据：API /metrics 快照与 Prometheus 目标状态
 echo "3.y) 保存 API /metrics 与 Prometheus targets 快照"
