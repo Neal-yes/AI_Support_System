@@ -156,6 +156,8 @@ jobs:
           GATE_REQUIRE_MIN_TOTAL: "0"
           RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
           RAG_TOP_K: "5"
+          # 关键：将隔离集合名传入 RAG gate，避免 fallback 到默认集合
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           bash scripts/rag_eval_gate.sh
 
