@@ -6,7 +6,7 @@ TENANT="${1:-demo}"
 API_BASE="http://localhost:${API_PORT:-8000}"
 PROM="http://localhost:9090"
 
-COL="default_collection"
+COL="${METRICS_TEST_COLLECTION:-metrics_demo_1d}"
 
 # 输出目录（用于 CI artifacts）
 OUT_DIR="artifacts/metrics"
@@ -44,7 +44,7 @@ prom_query() {
   return 0
 }
 
-echo "0) Ensure collection '${COL}' exists (vector_size=1)"
+echo "0) Ensure metrics test collection '${COL}' exists (vector_size=1)"
 curl -fsS -X POST "${API_BASE}/collections/ensure" \
   -H "Content-Type: application/json" \
   -d '{"name":"'"${COL}"'","vector_size":1}' >/dev/null || true
@@ -228,7 +228,13 @@ if gt "$TOOLS_CO_5M" "$GATE_CIRCUIT_OPEN_INCR_5M_MAX"; then
   FAIL_REASONS+=("circuit_open_incr_5m>${GATE_CIRCUIT_OPEN_INCR_5M_MAX} (${TOOLS_CO_5M})")
 fi
 
-# Write JSON summary
+# Write JSON summary (build reasons array robustly)
+if [ ${#FAIL_REASONS[@]:-0} -gt 0 ]; then
+  REASONS_JSON=$(printf '%s\n' "${FAIL_REASONS[@]}" | jq -R . | jq -s .)
+else
+  REASONS_JSON='[]'
+fi
+
 jq -n \
   --argjson req_1m "$TOOLS_REQ_1M" \
   --argjson err_1m "$TOOLS_ERR_1M" \
@@ -241,7 +247,7 @@ jq -n \
   --arg gate_rate_limit_incr_1m_max "$GATE_RATE_LIMIT_INCR_1M_MAX" \
   --arg gate_circuit_open_incr_5m_max "$GATE_CIRCUIT_OPEN_INCR_5M_MAX" \
   --argjson pass "$GATE_PASS" \
-  --argjson reasons "$(printf '%s\n' "${FAIL_REASONS[@]:-}" | jq -R . | jq -s .)" \
+  --argjson reasons "$REASONS_JSON" \
   '{
     window: {requests_1m:$req_1m, errors_1m:$err_1m, rate_limited_1m:$rl_1m, circuit_open_5m:$co_5m, cache_hits_1m:$cache_1m, retries_1m:$retry_1m, error_ratio_1m:($err_ratio_1m|tonumber)},
     gates: {error_ratio_1m_max:($gate_error_ratio_1m_max|tonumber), rate_limit_incr_1m_max:($gate_rate_limit_incr_1m_max|tonumber), circuit_open_incr_5m_max:($gate_circuit_open_incr_5m_max|tonumber)},
