@@ -87,9 +87,14 @@ validate_rag() {
   if ! jq -e . "$file" >/dev/null 2>&1; then
     echo "[SMOKE] rag: invalid JSON" >&2; return 1
   fi
-  # meta.use_rag must be true; if meta.match==true then sources length >=1
-  if ! jq -e '(.meta.use_rag == true) and ((.meta.match == true) | not or ((.sources | type=="array") and ((.sources | length) >= 1)))' "$file" >/dev/null 2>&1; then
-    echo "[SMOKE] rag: meta.use_rag must be true and when match=true, sources must be non-empty" >&2; return 1
+  # meta.use_rag must be true; sources must be a non-empty array
+  # If COLLECTION (requested) is provided, response .meta.collection must match it
+  if ! jq -e --arg coll "$COLLECTION" '
+    (.meta.use_rag == true)
+    and ((.sources | type=="array") and ((.sources | length) >= 1))
+    and (((($coll | length) == 0)) or (.meta.collection == $coll))
+  ' "$file" >/dev/null 2>&1; then
+    echo "[SMOKE] rag: require meta.use_rag=true, sources non-empty, and when requested collection is set, meta.collection must match it" >&2; return 1
   fi
   return 0
 }
