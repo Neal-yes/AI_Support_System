@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      METRICS_TEST_COLLECTION: metrics_demo_1d
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -114,9 +116,18 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-      - name: Smoke ask (plain + RAG)
+      - name: Prepare RAG demo embeddings
+        env:
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
-          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>}"
+          echo "[CI] Preparing demo embeddings for RAG (collection=${RAG_COLLECTION})"
+          bash scripts/prepare_demo_embeddings.sh
+
+      - name: Smoke ask (plain + RAG)
+        env:
+          COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>} COLLECTION=${COLLECTION:-<unset>}"
           bash scripts/smoke_ask.sh
 
       - name: Assert Smoke PASS

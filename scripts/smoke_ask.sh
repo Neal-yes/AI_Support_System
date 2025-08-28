@@ -9,6 +9,8 @@ OUT_DIR=${OUT_DIR:-artifacts/metrics}
 MODEL=${MODEL:-}
 SMOKE_VERBOSE=${SMOKE_VERBOSE:-0}
 SKIP_RAG=${SKIP_RAG:-0}
+# Optional target collection for RAG; when set, will be included in request body
+COLLECTION=${COLLECTION:-}
 # Max seconds per curl call (overall). RAG may take longer; default 300.
 SMOKE_MAX_TIME=${SMOKE_MAX_TIME:-300}
 
@@ -47,6 +49,7 @@ rag_body=$(jq -n \
   --argjson use_rag true \
   --argjson top_k 5 \
   --argjson num_predict 48 \
+  --arg coll "$COLLECTION" \
   '
   ($model | length) as $ml |
   {
@@ -54,7 +57,9 @@ rag_body=$(jq -n \
     use_rag: $use_rag,
     top_k: $top_k,
     options: { num_predict: $num_predict }
-  } + ( if $ml > 0 then { model: $model } else {} end )
+  }
+  + ( if $ml > 0 then { model: $model } else {} end )
+  + ( if ($coll | length) > 0 then { collection: $coll } else {} end )
   ')
 
 call_once() {
