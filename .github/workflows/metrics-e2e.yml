@@ -261,6 +261,21 @@ jobs:
         run: |
           bash "$GITHUB_WORKSPACE/scripts/smoke_ask.sh"
 
+      - name: Assert Smoke PASS
+        run: |
+          set -euo pipefail
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            if ! grep -qE '^- result: PASS$' artifacts/metrics/smoke_summary.md; then
+              echo "Smoke summary indicates failure or missing PASS:" >&2
+              sed -n '1,200p' artifacts/metrics/smoke_summary.md >&2 || true
+              exit 1
+            fi
+          else
+            echo "smoke_summary.md not found; failing to avoid false positives." >&2
+            ls -la artifacts/metrics || true
+            exit 1
+          fi
+
       - name: Set gate thresholds by branch
         run: |
           set -euo pipefail
