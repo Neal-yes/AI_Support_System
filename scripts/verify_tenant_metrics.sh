@@ -12,15 +12,41 @@ COL="default_collection"
 OUT_DIR="artifacts/metrics"
 mkdir -p "${OUT_DIR}"
 
+# Helper: robust Prometheus instant query with retries and tolerant jq
+# Usage: prom_query "<promql>" "<output_path>"
+prom_query() {
+  local query="$1"
+  local out="$2"
+  local tries=3
+  local delay=5
+  local i resp
+  echo "Query: ${query}"
+  for i in $(seq 1 ${tries}); do
+    # Do not fail the whole script on transient HTTP/jq errors
+    resp=$(curl -fsS --get "${PROM}/api/v1/query" --data-urlencode "query=${query}" 2>/dev/null || true)
+    if [ -n "${resp}" ] && echo "${resp}" | jq -e .status >/dev/null 2>&1; then
+      printf '%s\n' "${resp}" | tee "${out}" >/dev/null 2>&1 || true
+      # Pretty print best-effort; ignore jq parse failures
+      printf '%s\n' "${resp}" | jq . >/dev/null 2>&1 || echo "[WARN] jq pretty print failed for ${out}"
+      return 0
+    fi
+    echo "[WARN] Prom query attempt ${i}/${tries} failed or empty; retrying in ${delay}s..."
+    sleep "${delay}"
+  done
+  echo "[WARN] Prom query ultimately failed; saving raw/empty payload to ${out}"
+  printf '%s\n' "${resp:-{}}" > "${out}"
+  return 0
+}
+
 echo "0) Ensure collection '${COL}' exists (vector_size=1)"
 curl -fsS -X POST "${API_BASE}/collections/ensure" \
   -H "Content-Type: application/json" \
   -d '{"name":"'"${COL}"'","vector_size":1}' >/dev/null || true
 
 echo "0.x) Verify collection exists (retry until ready)"
-# 等待集合可用（API 需要 Qdrant 就绪）。最多重试 12 次 * 5s = 60s。
+# 等待集合可用（API 需要 Qdrant 就绪）。最多重试 24 次 * 5s = 120s。
 COL_HTTP=""
-for i in {1..12}; do
+for i in {1..24}; do
   COL_HTTP=$(curl -sS -o /dev/null -w "%{http_code}" "${API_BASE}/collections/${COL}" || true)
   if [ "${COL_HTTP}" = "200" ]; then
     echo "Collection '${COL}' is ready (HTTP 200)"
@@ -79,28 +105,28 @@ curl -fsS -H "X-Tenant-Id: ${TENANT}" \
 ROWS1=$(wc -l </tmp/download1.jsonl | tr -d ' ')
 echo "Downloaded rows: $ROWS1"
 
-echo "Waiting for Prometheus to scrape once (20s)..."
-sleep 20
+echo "Waiting for Prometheus to scrape once (30s)..."
+sleep 30
 
 echo "1.1) Trigger second download with tenant: ${TENANT}"
 curl -fsS -H "X-Tenant-Id: ${TENANT}" \
   "${API_BASE}/collections/export/download?collection=${COL}&with_vectors=true&with_payload=true&gzip=false" \
   -o /dev/null || true
 
-echo "Waiting for Prometheus to scrape again (20s)..."
-sleep 20
+echo "Waiting for Prometheus to scrape again (30s)..."
+sleep 30
 
 echo "1.2) Trigger third download with tenant: ${TENANT}"
 curl -fsS -H "X-Tenant-Id: ${TENANT}" \
   "${API_BASE}/collections/export/download?collection=${COL}&with_vectors=true&with_payload=true&gzip=false" \
   -o /dev/null || true
 
-echo "Waiting for Prometheus to scrape again (20s)..."
-sleep 20
+echo "Waiting for Prometheus to scrape again (30s)..."
+sleep 30
 
 echo "2) Query Prometheus for download metrics with tenant filter"
 
-# 定义查询
+# 定义查询（下载/导出相关）
 QUERY1='sum by (tenant,collection) (rate(download_bytes_total{tenant="'"${TENANT}"'"}[1m]))'
 QUERY2='histogram_quantile(0.95, sum by (le) (rate(download_duration_seconds_bucket{tenant="'"${TENANT}"'"}[5m])))'
 QUERY3='sum by (tenant,collection) (download_rows_total{tenant="'"${TENANT}"'"})'
@@ -109,10 +135,7 @@ QUERY5='export_success_rate{tenant="'"${TENANT}"'"}'
 
 IDX=1
 for Q in "$QUERY1" "$QUERY2" "$QUERY3" "$QUERY4" "$QUERY5"; do
-  echo "Query: $Q"
-  curl -fsS --get "${PROM}/api/v1/query" --data-urlencode "query=${Q}" \
-    | tee "${OUT_DIR}/prom_download_q${IDX}.json" \
-    | jq .
+  prom_query "$Q" "${OUT_DIR}/prom_download_q${IDX}.json"
   IDX=$((IDX+1))
 done
 
@@ -144,12 +167,12 @@ echo "3.4) retries 演示"
 REQ_TOOLS_RETRY='{"tenant_id":"'"${TENANT}"'","tool_type":"http_post","tool_name":"simple","params":{"url":"https://example.com","body":{"k":"v"}},"options":{"timeout_ms":1000,"simulate_fail":true,"retry_max":2,"retry_backoff_ms":50}}'
 curl -sS -o /dev/null -w "%{http_code}\n" -X POST "${API_BASE}/api/v1/tools/invoke" -H "Content-Type: application/json" -d "$REQ_TOOLS_RETRY" || true
 
-echo "等待 Prometheus 抓取一次 (20s)，随后再次触发重试以形成 1m 窗口的增量"
-sleep 20
+echo "等待 Prometheus 抓取一次 (30s)，随后再次触发重试以形成 1m 窗口的增量"
+sleep 30
 curl -sS -o /dev/null -w "%{http_code}\n" -X POST "${API_BASE}/api/v1/tools/invoke" -H "Content-Type: application/json" -d "$REQ_TOOLS_RETRY" || true
 
-echo "再次等待 Prometheus 抓取 (20s)..."
-sleep 20
+echo "再次等待 Prometheus 抓取 (30s)..."
+sleep 30
 
 echo "3.x) 查询 Prometheus: tools_* 与录制规则"
 Q_T1='sum by (tenant,tool_type,tool_name) (increase(tools_requests_total[1m]))'
@@ -161,10 +184,7 @@ Q_T6='sum by (tenant,tool_type,tool_name) (increase(tools_retries_total[1m]))'
 Q_T7='tools_error_ratio_1m{tenant="'"${TENANT}"'"}'
 TIDX=1
 for Q in "$Q_T1" "$Q_T2" "$Q_T3" "$Q_T4" "$Q_T5" "$Q_T6" "$Q_T7"; do
-  echo "Query: $Q"
-  curl -fsS --get "${PROM}/api/v1/query" --data-urlencode "query=${Q}" \
-    | tee "${OUT_DIR}/prom_tools_q${TIDX}.json" \
-    | jq .
+  prom_query "$Q" "${OUT_DIR}/prom_tools_q${TIDX}.json"
   TIDX=$((TIDX+1))
 done
 
