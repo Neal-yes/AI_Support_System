@@ -114,6 +114,11 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+      - name: Prepare RAG demo embeddings
+        run: |
+          echo "[CI] Preparing demo embeddings for RAG"
+          bash scripts/prepare_demo_embeddings.sh
+
       - name: Smoke ask (plain + RAG)
         run: |
           echo "[CI] Smoke will use MODEL=${MODEL:-<unset>}"
@@ -179,4 +184,3 @@ jobs:
           path: |
             artifacts/metrics/*
           if-no-files-found: ignore
-
