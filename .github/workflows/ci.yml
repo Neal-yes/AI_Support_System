@@ -33,6 +33,15 @@ jobs:
           cp configs/env.example .env
           # Ensure API port is 8000 for local exposure
           sed -i 's/^API_PORT=.*/API_PORT=8000/' .env || true
+          # Export OLLAMA_MODEL to job env as MODEL (used by smoke test)
+          MODEL_FROM_ENV=$(grep -E '^OLLAMA_MODEL=' .env | head -n1 | cut -d= -f2- || true)
+          if [ -n "${MODEL_FROM_ENV:-}" ]; then
+            echo "MODEL=${MODEL_FROM_ENV}" >> "$GITHUB_ENV"
+            echo "[CI] Using MODEL from .env: ${MODEL_FROM_ENV}"
+          else
+            echo "[CI] No OLLAMA_MODEL found in .env; defaulting MODEL to qwen2.5:7b"
+            echo "MODEL=qwen2.5:7b" >> "$GITHUB_ENV"
+          fi
 
           echo "[CI] Docker/Compose versions"
           docker --version
@@ -82,11 +91,32 @@ jobs:
             exit 1
           fi
 
+          echo "[CI] Pre-pull model in Ollama to avoid 404 (model not found)"
+          set +e
+          PULL_NAME="${MODEL:-${MODEL_FROM_ENV:-qwen2.5:7b}}"
+          curl -fsS -X POST http://localhost:11434/api/pull \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\": \"${PULL_NAME}\"}" || true
+          echo "[CI] Waiting for model tag to appear: ${PULL_NAME}"
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:11434/api/tags | jq -e --arg m "${PULL_NAME}" '.models[].model == $m' >/dev/null 2>&1; then
+              echo "[CI] Model available: ${PULL_NAME}"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          set -e
+          if [ "$ok" != "1" ]; then
+            echo "[CI] Model ${PULL_NAME} not ready in time; proceeding but smoke may fail" >&2
+          fi
+
       - name: Run tests
         run: pytest -q
 
       - name: Smoke ask (plain + RAG)
         run: |
+          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>}"
           bash scripts/smoke_ask.sh
 
       - name: Assert Smoke PASS
