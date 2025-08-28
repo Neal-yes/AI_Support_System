@@ -7,6 +7,7 @@ set -euo pipefail
 API_BASE=${API_BASE:-http://localhost:8000}
 OUT_DIR=${OUT_DIR:-artifacts/metrics}
 MODEL=${MODEL:-}
+COLLECTION=${COLLECTION:-}
 SMOKE_VERBOSE=${SMOKE_VERBOSE:-0}
 SKIP_RAG=${SKIP_RAG:-0}
 # Max seconds per curl call (overall). RAG may take longer; default 300.
@@ -25,7 +26,7 @@ mkdir -p "$OUT_DIR"
 : > "$OUT_DIR/ask_rag.json"
 : > "$OUT_DIR/ask_plain.status"
 : > "$OUT_DIR/ask_rag.status"
-echo "[SMOKE] API_BASE=$API_BASE MODEL=$MODEL OUT_DIR=$OUT_DIR SKIP_RAG=$SKIP_RAG" >&2
+echo "[SMOKE] API_BASE=$API_BASE MODEL=$MODEL COLLECTION=${COLLECTION:-<unset>} OUT_DIR=$OUT_DIR SKIP_RAG=$SKIP_RAG" >&2
 
 plain_body=$(jq -n \
   --arg model "$MODEL" \
@@ -44,17 +45,21 @@ plain_body=$(jq -n \
 rag_body=$(jq -n \
   --arg model "$MODEL" \
   --arg q "如何查看 Prometheus 指标?" \
+  --arg coll "$COLLECTION" \
   --argjson use_rag true \
   --argjson top_k 5 \
   --argjson num_predict 48 \
   '
   ($model | length) as $ml |
+  ($coll | length) as $cl |
   {
     query: $q,
     use_rag: $use_rag,
     top_k: $top_k,
     options: { num_predict: $num_predict }
-  } + ( if $ml > 0 then { model: $model } else {} end )
+  }
+  + ( if $ml > 0 then { model: $model } else {} end )
+  + ( if $cl > 0 then { collection: $coll } else {} end )
   ')
 
 call_once() {
@@ -153,6 +158,8 @@ SUM_FINAL="$OUT_DIR/smoke_summary.md"
       # Precompute with safe fallbacks to avoid empty substitutions
       rag_sources_len=$(jq -r '.sources | if type=="array" then length else 0 end' "$OUT_DIR/ask_rag.json" 2>/dev/null || echo 0)
       rag_match=$(jq -r '.meta | if has("match") then .match else "null" end' "$OUT_DIR/ask_rag.json" 2>/dev/null || echo null)
+      rag_resp_coll=$(jq -r '.meta.collection // "<none>"' "$OUT_DIR/ask_rag.json" 2>/dev/null || echo "<none>")
+      echo "  - request_collection=${COLLECTION:-<default>} response_collection=${rag_resp_coll}"
       echo "  - sources_len=${rag_sources_len} match=${rag_match}"
     fi
   fi
@@ -191,6 +198,12 @@ if [ "$SKIP_RAG" != "1" ]; then
   fi
 fi
 echo "[SMOKE] both plain and rag succeeded: http1=$hc1 http2=$hc2" >&2
+
+# 打印 RAG 请求与响应集合，便于 CI 日志快速确认
+if [ "$SKIP_RAG" != "1" ] && command -v jq >/dev/null 2>&1; then
+  resp_coll=$(jq -r '.meta.collection // "<none>"' "$OUT_DIR/ask_rag.json" 2>/dev/null || echo "<none>")
+  echo "[SMOKE] RAG collection requested='${COLLECTION:-<default>}' response='${resp_coll}'" >&2
+fi
 
 { echo "- result: PASS"; } >> "$SUM_TMP" || true
 mv -f "$SUM_TMP" "$SUM_FINAL" 2>/dev/null || true

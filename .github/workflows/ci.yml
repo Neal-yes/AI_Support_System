@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # 使用隔离的 metrics 集合以避免与默认集合冲突
+      METRICS_TEST_COLLECTION: metrics_demo_1d
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -115,13 +118,17 @@ jobs:
         run: pytest -q
 
       - name: Prepare RAG demo embeddings
+        env:
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           echo "[CI] Preparing demo embeddings for RAG"
           bash scripts/prepare_demo_embeddings.sh
 
       - name: Smoke ask (plain + RAG)
+        env:
+          COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
-          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>}"
+          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>} COLLECTION=${COLLECTION:-<unset>}"
           bash scripts/smoke_ask.sh
 
       - name: Assert Smoke PASS
