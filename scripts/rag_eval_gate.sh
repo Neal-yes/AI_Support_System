@@ -165,6 +165,26 @@ if [ $PASS -ne 1 ] && [ -f "$CSV_OUT" ]; then
   } >> "$SUMMARY_MD" || true
 fi
 
+echo "## Collection and Key Results" >> "$SUMMARY_MD"
+echo "- Collection: ${RAG_COLLECTION:-<default>}" >> "$SUMMARY_MD"
+echo "- Hit Ratio: ${HIT_RATIO}" >> "$SUMMARY_MD"
+echo "- Average Top1 Score: ${AVG_TOP1}" >> "$SUMMARY_MD"
+
+# Append brief summary to GitHub Job Summary if available
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  {
+    echo "## RAG Gate Summary"
+    echo "- total: ${TOTAL}"
+    echo "- hit_ratio: ${HIT_RATIO}"
+    echo "- avg_top1: ${AVG_TOP1}"
+    echo "- top_k: ${RAG_TOP_K}"
+    echo "- collection: ${RAG_COLLECTION:-<default>}"
+    if [ -f "$CSV_OUT" ]; then
+      echo "- csv: $(basename "$CSV_OUT") (in artifacts)"
+    fi
+  } >> "$GITHUB_STEP_SUMMARY" || true
+fi
+
 if [ $PASS -eq 1 ]; then
   echo "[RAG GATE] PASS"
   exit 0

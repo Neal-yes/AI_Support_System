@@ -214,3 +214,23 @@ fi
 mv -f "$SUM_TMP" "$SUM_FINAL" 2>/dev/null || true
 
 echo "[SMOKE] /api/v1/ask plain & rag OK"
+
+# Append brief summary to GitHub Job Summary if available
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  {
+    echo "## Smoke Ask"
+    echo "- plain: rc=$rc1 http=$hc1"
+    if [ "$SKIP_RAG" = "1" ]; then
+      echo "- rag: skipped"
+    else
+      # Recompute resp_coll safely
+      if command -v jq >/dev/null 2>&1 && [ -s "$OUT_DIR/ask_rag.json" ]; then
+        resp_coll=$(jq -r '.meta.collection // "<none>"' "$OUT_DIR/ask_rag.json" 2>/dev/null || echo "<none>")
+      else
+        resp_coll="<none>"
+      fi
+      echo "- rag: rc=$rc2 http=$hc2"
+      echo "  - collection: request='${COLLECTION:-<default>}' response='${resp_coll}'"
+    fi
+  } >> "$GITHUB_STEP_SUMMARY" || true
+fi
