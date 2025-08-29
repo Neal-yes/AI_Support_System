@@ -185,6 +185,31 @@ jobs:
           echo "- plain: ${P_STATUS}" >> "$GITHUB_STEP_SUMMARY"
           echo "- rag: ${R_STATUS}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Assert CI Summary includes isolated collection
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f "$GITHUB_STEP_SUMMARY" ]; then
+            echo "GITHUB_STEP_SUMMARY not found; failing." >&2
+            exit 1
+          fi
+          echo "[CI] Verify step summary contains isolated collection and sections"
+          if ! grep -q 'metrics_demo_1d' "$GITHUB_STEP_SUMMARY"; then
+            echo "Missing metrics_demo_1d in step summary" >&2
+            sed -n '1,200p' "$GITHUB_STEP_SUMMARY" >&2 || true
+            exit 1
+          fi
+          if ! grep -qE '^## RAG Gate Summary' "$GITHUB_STEP_SUMMARY"; then
+            echo "Missing RAG Gate Summary header in step summary" >&2
+            sed -n '1,200p' "$GITHUB_STEP_SUMMARY" >&2 || true
+            exit 1
+          fi
+          if ! grep -qE '^## Smoke Ask' "$GITHUB_STEP_SUMMARY"; then
+            echo "Missing Smoke Ask header in step summary" >&2
+            sed -n '1,200p' "$GITHUB_STEP_SUMMARY" >&2 || true
+            exit 1
+          fi
+
       - name: Upload metrics artifacts
         if: always()
         uses: actions/upload-artifact@v4
