@@ -164,7 +164,14 @@ jobs:
       - name: CI Summary (RAG & Smoke)
         if: always()
         run: |
+          mkdir -p artifacts/metrics
+          SUMMARY_FILE="artifacts/metrics/ci_step_summary.md"
+
           echo "## RAG Gate Summary" >> "$GITHUB_STEP_SUMMARY"
+          # Explicitly include isolated collection so later assert checks within the same step summary
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## RAG Gate Summary" >> "$SUMMARY_FILE"
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$SUMMARY_FILE"
           if [ -f artifacts/metrics/rag_eval.json ]; then
             HR=$(jq -r '.summary.hit_ratio // 0' artifacts/metrics/rag_eval.json)
             AT1=$(jq -r '.summary.avg_top1 // 0' artifacts/metrics/rag_eval.json)
@@ -172,41 +179,53 @@ jobs:
             echo "- total: ${TOT}" >> "$GITHUB_STEP_SUMMARY"
             echo "- hit_ratio: ${HR}" >> "$GITHUB_STEP_SUMMARY"
             echo "- avg_top1: ${AT1}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- total: ${TOT}" >> "$SUMMARY_FILE"
+            echo "- hit_ratio: ${HR}" >> "$SUMMARY_FILE"
+            echo "- avg_top1: ${AT1}" >> "$SUMMARY_FILE"
             if [ -f artifacts/metrics/rag_eval.csv ]; then
               echo "- csv: artifacts/metrics/rag_eval.csv (in artifacts)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- csv: artifacts/metrics/rag_eval.csv (in artifacts)" >> "$SUMMARY_FILE"
             fi
           else
             echo "- rag_eval.json not found" >> "$GITHUB_STEP_SUMMARY"
+            echo "- rag_eval.json not found" >> "$SUMMARY_FILE"
           fi
 
-          echo "\n## Smoke Ask" >> "$GITHUB_STEP_SUMMARY"
+          # Newline then the Smoke section header; echo -e is shell-dependent, so use printf
+          printf "\n## Smoke Ask\n" >> "$GITHUB_STEP_SUMMARY"
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$GITHUB_STEP_SUMMARY"
+          printf "\n## Smoke Ask\n" >> "$SUMMARY_FILE"
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$SUMMARY_FILE"
           P_STATUS=$(cat artifacts/metrics/ask_plain.status 2>/dev/null || echo "missing")
           R_STATUS=$(cat artifacts/metrics/ask_rag.status 2>/dev/null || echo "missing")
           echo "- plain: ${P_STATUS}" >> "$GITHUB_STEP_SUMMARY"
           echo "- rag: ${R_STATUS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- plain: ${P_STATUS}" >> "$SUMMARY_FILE"
+          echo "- rag: ${R_STATUS}" >> "$SUMMARY_FILE"
 
       - name: Assert CI Summary includes isolated collection
         if: always()
         run: |
           set -euo pipefail
-          if [ ! -f "$GITHUB_STEP_SUMMARY" ]; then
-            echo "GITHUB_STEP_SUMMARY not found; failing." >&2
+          SUMMARY_FILE="artifacts/metrics/ci_step_summary.md"
+          if [ ! -f "$SUMMARY_FILE" ]; then
+            echo "${SUMMARY_FILE} not found; failing." >&2
             exit 1
           fi
           echo "[CI] Verify step summary contains isolated collection and sections"
-          if ! grep -q 'metrics_demo_1d' "$GITHUB_STEP_SUMMARY"; then
+          if ! grep -q 'metrics_demo_1d' "$SUMMARY_FILE"; then
             echo "Missing metrics_demo_1d in step summary" >&2
-            sed -n '1,200p' "$GITHUB_STEP_SUMMARY" >&2 || true
+            sed -n '1,200p' "$SUMMARY_FILE" >&2 || true
             exit 1
           fi
-          if ! grep -qE '^## RAG Gate Summary' "$GITHUB_STEP_SUMMARY"; then
+          if ! grep -qE '^## RAG Gate Summary' "$SUMMARY_FILE"; then
             echo "Missing RAG Gate Summary header in step summary" >&2
-            sed -n '1,200p' "$GITHUB_STEP_SUMMARY" >&2 || true
+            sed -n '1,200p' "$SUMMARY_FILE" >&2 || true
             exit 1
           fi
-          if ! grep -qE '^## Smoke Ask' "$GITHUB_STEP_SUMMARY"; then
+          if ! grep -qE '^## Smoke Ask' "$SUMMARY_FILE"; then
             echo "Missing Smoke Ask header in step summary" >&2
-            sed -n '1,200p' "$GITHUB_STEP_SUMMARY" >&2 || true
+            sed -n '1,200p' "$SUMMARY_FILE" >&2 || true
             exit 1
           fi
 
