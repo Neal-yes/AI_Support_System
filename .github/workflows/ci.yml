@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # 使用隔离的 metrics 集合以避免与默认集合冲突
+      METRICS_TEST_COLLECTION: metrics_demo_1d
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,6 +36,15 @@ jobs:
           cp configs/env.example .env
           # Ensure API port is 8000 for local exposure
           sed -i 's/^API_PORT=.*/API_PORT=8000/' .env || true
+          # Export OLLAMA_MODEL to job env as MODEL (used by smoke test)
+          MODEL_FROM_ENV=$(grep -E '^OLLAMA_MODEL=' .env | head -n1 | cut -d= -f2- || true)
+          if [ -n "${MODEL_FROM_ENV:-}" ]; then
+            echo "MODEL=${MODEL_FROM_ENV}" >> "$GITHUB_ENV"
+            echo "[CI] Using MODEL from .env: ${MODEL_FROM_ENV}"
+          else
+            echo "[CI] No OLLAMA_MODEL found in .env; defaulting MODEL to qwen2.5:7b"
+            echo "MODEL=qwen2.5:7b" >> "$GITHUB_ENV"
+          fi
 
           echo "[CI] Docker/Compose versions"
           docker --version
@@ -82,12 +94,57 @@ jobs:
             exit 1
           fi
 
+          echo "[CI] Pre-pull model in Ollama to avoid 404 (model not found)"
+          set +e
+          PULL_NAME="${MODEL:-${MODEL_FROM_ENV:-qwen2.5:7b}}"
+          curl -fsS -X POST http://localhost:11434/api/pull \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\": \"${PULL_NAME}\"}" || true
+          echo "[CI] Waiting for model tag to appear: ${PULL_NAME}"
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:11434/api/tags | jq -e --arg m "${PULL_NAME}" '.models[].model == $m' >/dev/null 2>&1; then
+              echo "[CI] Model available: ${PULL_NAME}"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          set -e
+          if [ "$ok" != "1" ]; then
+            echo "[CI] Model ${PULL_NAME} not ready in time; proceeding but smoke may fail" >&2
+          fi
+
       - name: Run tests
         run: pytest -q
 
-      - name: Smoke ask (plain + RAG)
+      - name: Prepare RAG demo embeddings
+        env:
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
+          echo "[CI] Preparing demo embeddings for RAG"
+          bash scripts/prepare_demo_embeddings.sh
+
+      - name: Smoke ask (plain + RAG)
+        env:
+          COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>} COLLECTION=${COLLECTION:-<unset>}"
           bash scripts/smoke_ask.sh
+
+      - name: Assert Smoke PASS
+        run: |
+          set -euo pipefail
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            if ! grep -qE '^- result: PASS$' artifacts/metrics/smoke_summary.md; then
+              echo "Smoke summary indicates failure or missing PASS:" >&2
+              sed -n '1,200p' artifacts/metrics/smoke_summary.md >&2 || true
+              exit 1
+            fi
+          else
+            echo "smoke_summary.md not found; failing to avoid false positives." >&2
+            ls -la artifacts/metrics || true
+            exit 1
+          fi
 
       - name: RAG evaluation gate
         env:
@@ -99,13 +156,22 @@ jobs:
           GATE_REQUIRE_MIN_TOTAL: "0"
           RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
           RAG_TOP_K: "5"
+          # 关键：将隔离集合名传入 RAG gate，避免 fallback 到默认集合
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           bash scripts/rag_eval_gate.sh
 
       - name: CI Summary (RAG & Smoke)
         if: always()
         run: |
+          mkdir -p artifacts/metrics
+          SUMMARY_FILE="artifacts/metrics/ci_step_summary.md"
+
           echo "## RAG Gate Summary" >> "$GITHUB_STEP_SUMMARY"
+          # Explicitly include isolated collection so later assert checks within the same step summary
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## RAG Gate Summary" >> "$SUMMARY_FILE"
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$SUMMARY_FILE"
           if [ -f artifacts/metrics/rag_eval.json ]; then
             HR=$(jq -r '.summary.hit_ratio // 0' artifacts/metrics/rag_eval.json)
             AT1=$(jq -r '.summary.avg_top1 // 0' artifacts/metrics/rag_eval.json)
@@ -113,18 +179,55 @@ jobs:
             echo "- total: ${TOT}" >> "$GITHUB_STEP_SUMMARY"
             echo "- hit_ratio: ${HR}" >> "$GITHUB_STEP_SUMMARY"
             echo "- avg_top1: ${AT1}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- total: ${TOT}" >> "$SUMMARY_FILE"
+            echo "- hit_ratio: ${HR}" >> "$SUMMARY_FILE"
+            echo "- avg_top1: ${AT1}" >> "$SUMMARY_FILE"
             if [ -f artifacts/metrics/rag_eval.csv ]; then
               echo "- csv: artifacts/metrics/rag_eval.csv (in artifacts)" >> "$GITHUB_STEP_SUMMARY"
+              echo "- csv: artifacts/metrics/rag_eval.csv (in artifacts)" >> "$SUMMARY_FILE"
             fi
           else
             echo "- rag_eval.json not found" >> "$GITHUB_STEP_SUMMARY"
+            echo "- rag_eval.json not found" >> "$SUMMARY_FILE"
           fi
 
-          echo "\n## Smoke Ask" >> "$GITHUB_STEP_SUMMARY"
+          # Newline then the Smoke section header; echo -e is shell-dependent, so use printf
+          printf "\n## Smoke Ask\n" >> "$GITHUB_STEP_SUMMARY"
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$GITHUB_STEP_SUMMARY"
+          printf "\n## Smoke Ask\n" >> "$SUMMARY_FILE"
+          echo "- collection: ${METRICS_TEST_COLLECTION}" >> "$SUMMARY_FILE"
           P_STATUS=$(cat artifacts/metrics/ask_plain.status 2>/dev/null || echo "missing")
           R_STATUS=$(cat artifacts/metrics/ask_rag.status 2>/dev/null || echo "missing")
           echo "- plain: ${P_STATUS}" >> "$GITHUB_STEP_SUMMARY"
           echo "- rag: ${R_STATUS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- plain: ${P_STATUS}" >> "$SUMMARY_FILE"
+          echo "- rag: ${R_STATUS}" >> "$SUMMARY_FILE"
+
+      - name: Assert CI Summary includes isolated collection
+        if: always()
+        run: |
+          set -euo pipefail
+          SUMMARY_FILE="artifacts/metrics/ci_step_summary.md"
+          if [ ! -f "$SUMMARY_FILE" ]; then
+            echo "${SUMMARY_FILE} not found; failing." >&2
+            exit 1
+          fi
+          echo "[CI] Verify step summary contains isolated collection and sections"
+          if ! grep -q 'metrics_demo_1d' "$SUMMARY_FILE"; then
+            echo "Missing metrics_demo_1d in step summary" >&2
+            sed -n '1,200p' "$SUMMARY_FILE" >&2 || true
+            exit 1
+          fi
+          if ! grep -qE '^## RAG Gate Summary' "$SUMMARY_FILE"; then
+            echo "Missing RAG Gate Summary header in step summary" >&2
+            sed -n '1,200p' "$SUMMARY_FILE" >&2 || true
+            exit 1
+          fi
+          if ! grep -qE '^## Smoke Ask' "$SUMMARY_FILE"; then
+            echo "Missing Smoke Ask header in step summary" >&2
+            sed -n '1,200p' "$SUMMARY_FILE" >&2 || true
+            exit 1
+          fi
 
       - name: Upload metrics artifacts
         if: always()
@@ -134,4 +237,3 @@ jobs:
           path: |
             artifacts/metrics/*
           if-no-files-found: ignore
-
