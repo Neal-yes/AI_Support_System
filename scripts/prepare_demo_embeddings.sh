@@ -184,7 +184,6 @@ wait_api_ready 90
 
 # 预热嵌入模型，减少首次 upsert 出错概率
 warmup_embed 8
-
 while [ $OFFSET -lt $COUNT ]; do
   SIZE=$(( COUNT - OFFSET ))
   if [ $SIZE -gt $BATCH_SIZE ]; then SIZE=$BATCH_SIZE; fi
