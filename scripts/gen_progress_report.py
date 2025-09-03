@@ -136,6 +136,29 @@ def write_kanban_md(p: Progress, out_md: str) -> None:
         except Exception:
             collections_count = None
 
+    # Precompute optional sections to avoid backslashes in f-string expressions
+    rag_section = ""
+    if hr is not None or at1 is not None or tot is not None:
+        rag_lines = [
+            "",
+            "## RAG 基线摘要",
+            f"- total: {tot}",
+            (f"- hit_ratio: {hr:.3f}" if isinstance(hr, (int, float)) else f"- hit_ratio: {hr}"),
+            (f"- avg_top1: {at1:.3f}" if isinstance(at1, (int, float)) else f"- avg_top1: {at1}"),
+            "",
+        ]
+        rag_section = "\n".join(rag_lines)
+
+    backup_section = ""
+    if collections_count is not None:
+        backup_lines = [
+            "",
+            "## 备份健康快照",
+            f"- collections: {collections_count}",
+            "",
+        ]
+        backup_section = "\n".join(backup_lines)
+
     content = f"""# 进度看板（自动生成）
 
 - 生成时间（UTC）：{os.getenv('GITHUB_RUN_ATTEMPT') or ''}
@@ -156,9 +179,7 @@ def write_kanban_md(p: Progress, out_md: str) -> None:
 - RAG 指标：artifacts/metrics/rag_eval.json / rag_eval.csv
 - Smoke 摘要：artifacts/metrics/smoke_summary.md
 - Playwright：playwright-report / playwright-junit-xml
-{('\n## RAG 基线摘要\n- total: ' + str(tot) + "\n- hit_ratio: " + (f"{hr:.3f}" if isinstance(hr, (int, float)) else str(hr)) + "\n- avg_top1: " + (f"{at1:.3f}" if isinstance(at1, (int, float)) else str(at1)) + "\n") if (hr is not None or at1 is not None or tot is not None) else ''}
-{('\n## 备份健康快照\n- collections: ' + str(collections_count) + "\n") if collections_count is not None else ''}
-"""
+""" + rag_section + backup_section
     with open(out_md, "w", encoding="utf-8") as f:
         f.write(content)
 
