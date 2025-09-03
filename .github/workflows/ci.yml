@@ -525,6 +525,13 @@ jobs:
             sleep 3
           done
 
+      - name: Prepare RAG demo embeddings
+        env:
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          echo "[CI] Preparing demo embeddings for RAG (rag-gate)"
+          bash scripts/prepare_demo_embeddings.sh
+
       - name: RAG evaluation gate
         env:
           GATE_HIT_RATIO_MIN: "0.60"
