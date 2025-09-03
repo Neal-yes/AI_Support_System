@@ -8,6 +8,7 @@ import time
 from typing import Any, Dict, Optional, Tuple, Union
 
 import httpx
+from urllib.parse import urlparse
 from fastapi import HTTPException
 from prometheus_client import Counter, Histogram
 from psycopg.rows import dict_row
@@ -40,7 +41,6 @@ LATENCY_SEC = Histogram(
 )
 
 SENSITIVE_KEYS = {"token", "authorization", "cookie", "api_key", "apikey", "password"}
-
 
 def _mask_value(v: Any) -> Any:
     if v is None:
@@ -163,6 +163,28 @@ class ToolExecutor:
         return _AsyncLockCtx(lock)
 
     # 校验
+    def _check_host_policy(self, url: str, options: Dict[str, Any]) -> None:
+        """Enforce simple allow/deny host policy based on options.
+        - options.allow_hosts: list[str] of hostnames. If provided, target host must be in the list.
+        - options.deny_hosts: list[str] of hostnames. If provided, target host must not be in the list.
+        Matching is exact on hostname (lowercased), ignoring port.
+        """
+        try:
+            host = urlparse(url).hostname or ""
+            host = host.lower()
+        except Exception:
+            host = ""
+        allow_hosts = options.get("allow_hosts")
+        if isinstance(allow_hosts, list) and len(allow_hosts) > 0:
+            allow_set = {str(h).lower() for h in allow_hosts if isinstance(h, (str,)) and h}
+            if host not in allow_set:
+                raise HTTPException(status_code=403, detail="host is not allowed by allow_hosts policy")
+        deny_hosts = options.get("deny_hosts")
+        if isinstance(deny_hosts, list) and len(deny_hosts) > 0:
+            deny_set = {str(h).lower() for h in deny_hosts if isinstance(h, (str,)) and h}
+            if host in deny_set:
+                raise HTTPException(status_code=403, detail="host is denied by deny_hosts policy")
+
     def _validate_http_get(self, params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
         url = params.get("url")
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
@@ -170,6 +192,8 @@ class ToolExecutor:
         timeout_ms = options.get("timeout_ms", 2000)
         if not isinstance(timeout_ms, int) or not (1 <= timeout_ms <= 10000):
             raise HTTPException(status_code=400, detail="options.timeout_ms must be int in [1,10000]")
+        # host allow/deny policy
+        self._check_host_policy(url, options)
         return {"url": url}
 
     def _validate_http_post(self, params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
@@ -182,6 +206,8 @@ class ToolExecutor:
         timeout_ms = options.get("timeout_ms", 5000)
         if not isinstance(timeout_ms, int) or not (1 <= timeout_ms <= 15000):
             raise HTTPException(status_code=400, detail="options.timeout_ms must be int in [1,15000]")
+        # host allow/deny policy
+        self._check_host_policy(url, options)
         return {"url": url, "has_body": body is not None}
 
     def _validate(self, tool_type: str, tool_name: str, params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:

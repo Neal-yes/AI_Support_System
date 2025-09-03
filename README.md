@@ -108,6 +108,32 @@ docker compose down
     histogram_quantile(0.95, sum by (le) (rate(tools_request_latency_seconds_bucket[5m])))
     ```
 
+#### 安全策略：HTTP 主机白名单/黑名单
+
+- 为了降低外呼风险，HTTP 工具支持在 `options` 中传入主机白名单/黑名单：
+  - `allow_hosts`: 数组，精确匹配主机名（不含协议/端口）。若提供，则目标主机必须在该列表中，否则 403。
+  - `deny_hosts`: 数组，精确匹配主机名。若提供且命中，则直接 403。
+- 校验位置：执行器校验阶段，路径 `src/app/core/tool_executor.py` 的 `_check_host_policy()`。
+- 示例：
+  ```json
+  {
+    "tenant_id": "default",
+    "tool_type": "http_get",
+    "tool_name": "simple",
+    "params": {"url": "https://example.com/path"},
+    "options": {"allow_hosts": ["example.com"], "resp_max_chars": 1024}
+  }
+  ```
+  ```json
+  {
+    "tenant_id": "default",
+    "tool_type": "http_get",
+    "tool_name": "simple",
+    "params": {"url": "https://blocked.example/path"},
+    "options": {"deny_hosts": ["blocked.example"]}
+  }
+  ```
+
 #### 指标样例输出
 
 以下为 `GET /metrics` 中与工具相关的样例片段（仅示例，数值随运行变化）：
@@ -297,37 +323,232 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
      - 限流/熔断/缓存/singleflight 的稳定键包含：`tenant_id`、`tool_type`、`tool_name`、标准化后的 `params`。
      - 结构化日志会记录 `event`（如 `tools_request`/`tools_cache_hit`/`tools_retry`/`tools_circuit_open` 等）与 `request_id`，便于排查与关联。
 
-### 只读 DB_QUERY 模板：`POST /api/v1/db/query_template`
+#### 策略文件格式（tools_policies.json）
 
-- 功能：以模板化、参数化且只读（仅 SELECT）的方式执行数据库查询；支持 `explain=true` 返回执行计划。
-- 安全约束：
-  - 仅允许 `SELECT` 开头；拒绝 `;`、注释（`--`、`/* */`）与 DML/DDL（INSERT/UPDATE/DELETE/ALTER/DROP/CREATE/GRANT/REVOKE/...）。
-  - 自动包裹 `LIMIT`（模板内无需写 LIMIT），默认 `max_rows=1000`（按模板可配置）。
-  - 只读账号、参数化执行（psycopg3），超时（默认 3000ms，按模板可配置）。
-- 示例模板（内置）：`echo_int`：
-  ```sql
-  SELECT %(x)s::int AS x
-  ```
-- 请求示例：
-  ```bash
-  # 1) 执行查询（只读）
-  curl -s -X POST http://localhost:8000/api/v1/db/query_template \
-    -H 'Content-Type: application/json' \
-    -H 'X-Tenant-Id: demo' \
-    -d '{"template_id":"echo_int","params":{"x":123}}' | jq .
-
-  # 2) 仅查看执行计划（不执行）
-  curl -s -X POST http://localhost:8000/api/v1/db/query_template \
-    -H 'Content-Type: application/json' \
-    -d '{"template_id":"echo_int","params":{"x":1},"explain":true}' | jq .
-  ```
-- 返回示例：
+- 位置：`configs/tools_policies.json`（可选）。`src/app/routers/tools.py` 会每 15 秒热加载并缓存。
+- 合并优先级（低 → 高；后者覆盖前者）：
+  1) 全局默认：`default.options`
+  2) 指定租户节点：`tenants[tenant_id].options`
+  3) 指定租户下按工具类型：`tenants[tenant_id].tools[tool_type].options`
+  4) 指定租户下按工具名称：`tenants[tenant_id].tools[tool_type].names[tool_name].options`
+  5) 请求体内的 `options`（最终覆盖）
+- 允许覆盖的典型键：`timeout_ms`、`retry_max`、`retry_backoff_ms`、`cache_ttl_ms`、`rate_limit_per_sec`、`circuit_threshold`、`circuit_cooldown_ms`、`resp_max_chars`、`allow_hosts`、`deny_hosts`、以及 DB 查询相关 `max_rows`。
+- 示例（与当前实现一致）：
   ```json
-  {"template_id":"echo_int","template_version":"v1","row_count":1,"rows":[{"x":123}]}
+  {
+    "default": {
+      "options": {
+        "timeout_ms": 3000,
+        "rate_limit_per_sec": 5,
+        "circuit_threshold": 3,
+        "circuit_cooldown_ms": 5000,
+        "retry_max": 1,
+        "retry_backoff_ms": 150,
+        "cache_ttl_ms": 0,
+        "resp_max_chars": 2048
+      }
+    },
+    "tenants": {
+      "default": {
+        "options": {},
+        "tools": {
+          "http_post": {
+            "options": { "timeout_ms": 5000 },
+            "names": {
+              "simple": { "options": {} }
+            }
+          },
+          "http_get": {
+            "options": { "timeout_ms": 3000 },
+            "names": {
+              "simple": { "options": { "resp_max_chars": 4096, "allow_hosts": ["example.com"] } }
+            }
+          },
+          "db_query": {
+            "options": { "timeout_ms": 3000, "max_rows": 1000 },
+            "names": {
+              "template": { "options": {} }
+            }
+          }
+        }
+      }
+    }
+  }
   ```
-- Prometheus 指标：
-  - `db_query_duration_seconds{template,tenant}` 查询耗时直方图
-  - `db_query_total{template,tenant,result}` 查询计数（result=ok|rejected|timeout|error）
+  - 以上示例展示了在“租户-工具名”层为 `http_get.simple` 配置 `allow_hosts`，仅允许访问 `example.com`。
+  - 你也可以在更高层（如 `tenants.default.tools.http_get.options`）配置 `deny_hosts`，并在名称层按需覆盖：
+    ```json
+    {
+      "tenants": {
+        "default": {
+          "tools": {
+            "http_get": {
+              "options": { "deny_hosts": ["blocked.example"] },
+              "names": {
+                "simple": { "options": { "allow_hosts": ["example.com"] } }
+              }
+            }
+          }
+        }
+      }
+    }
+    ```
+- 说明：若未提供 `tenant_id`，路由会使用 `_anon_` 作为标签；你可以在策略中为具体租户 ID 添加更细粒度的阈值或限制。
+- DB 查询网关在执行器侧还会执行只读校验与 LIMIT 包裹，详见 `src/app/core/tool_executor.py` 与 `src/app/routers/db.py`。
+
+#### 最小调用示例（/api/v1/tools/invoke）
+
+- 请求模型：`ToolInvokeRequest`
+  - 字段：`tenant_id?`、`tool_type`、`tool_name`、`params`、`options`
+- 响应模型：`ToolInvokeResponse`
+  - 字段：`request_id`、`tool_type`、`tool_name`、`result`
+
+#### 策略合并预览（/api/v1/tools/preview）
+
+- 用途：仅返回合并后的执行选项，不实际执行工具调用。便于前端/用户调试策略层级覆盖效果。
+- 请求与响应示例：
+
+  请求
+  ```bash
+  curl -sS -X POST -H 'Content-Type: application/json' \
+    --data '{
+      "tenant_id": "default",
+      "tool_type": "http_get",
+      "tool_name": "simple",
+      "params": {"url": "https://example.com"},
+      "options": {"timeout_ms": 1500, "allow_hosts": ["example.com"]}
+    }' \
+    http://localhost:8000/api/v1/tools/preview
+  ```
+
+  响应
+  ```json
+  {
+    "tenant_id": "default",
+    "tool_type": "http_get",
+    "tool_name": "simple",
+    "merged_options": {
+      "timeout_ms": 1500,
+      "rate_limit_per_sec": 5,
+      "circuit_threshold": 3,
+      "circuit_cooldown_ms": 5000,
+      "retry_max": 1,
+      "retry_backoff_ms": 150,
+      "cache_ttl_ms": 0,
+      "resp_max_chars": 2048,
+      "allow_hosts": ["example.com"]
+    },
+    "layers": {
+      "global": { "rate_limit_per_sec": 5, "retry_max": 1, "retry_backoff_ms": 150, "resp_max_chars": 2048, "cache_ttl_ms": 0, "circuit_threshold": 3, "circuit_cooldown_ms": 5000 },
+      "tenant": { },
+      "type": { },
+      "name": { },
+      "request": { "timeout_ms": 1500, "allow_hosts": ["example.com"] },
+      "merged": { "timeout_ms": 1500, "rate_limit_per_sec": 5, "circuit_threshold": 3, "circuit_cooldown_ms": 5000, "retry_max": 1, "retry_backoff_ms": 150, "cache_ttl_ms": 0, "resp_max_chars": 2048, "allow_hosts": ["example.com"] }
+    }
+  }
+  ```
+
+- 说明：合并顺序为 全局默认 → 租户默认 → 工具类型 → 工具名称 → 请求级 `options`。
+
+- layers 字段：
+  - `global`：全局默认层的 options 快照
+  - `tenant`：租户默认层
+  - `type`：租户下该工具类型层
+  - `name`：租户下该工具具体名称层
+  - `request`：本次请求传入的 `options`
+  - `merged`：以上层级按顺序覆盖后的最终结果（与 `merged_options` 一致）
+
+- 前端可视化建议：
+  - 在 `/tools` 页面展示 `merged_options` 与 `layers`，对每个键标注来源层（如 source=tenant），标识是否覆盖了更早层（overrode earlier layer）。
+  - 业务常见关注键：`allow_hosts`、`deny_hosts`、`timeout_ms`、`rate_limit_per_sec`、`retry_*`、`circuit_*`、`cache_ttl_ms`、`resp_max_chars`。
+
+#### 前端工具调试面板（/tools）
+
+- 功能概览：
+  - 输入 `tenant_id`、`tool_type`、`tool_name`、`params`、`options`
+  - 请求预览与 cURL 预览，一键复制
+  - 结果展示、响应头、状态码与耗时
+  - 合并策略预览：调用 `/api/v1/tools/preview` 展示 `merged_options`
+  - 按类型模板：根据 `tool_type` 快速填充 GET/POST 模板
+  - 调用历史：最近 20 次，支持一键恢复
+
+
+- cURL 示例（HTTP GET，依赖策略合并响应截断到 4096 字符）：
+  ```bash
+  curl -s -X POST http://localhost:8000/api/v1/tools/invoke \
+    -H 'Content-Type: application/json' \
+
+- 观测联动（可选配置）：
+  - 在页面中“观测链接”折叠区配置：
+  - Prometheus 基础 URL（例如 `http://localhost:9090`）与查询模板
+  - 日志系统基础 URL（例如 Loki/Kibana 网关地址）与查询模板
+  - 查询模板占位符：`$tenant`、`$type`、`$name`、`$key`（分别对应 `tenant_id`、`tool_type`、`tool_name`、策略键名）
+  - 表格“Obs”列：
+  - 点击“指标”会在新窗口打开 Prometheus 查询URL
+  - 点击“日志”会在新窗口打开日志检索URL
+  - Prometheus 兼容性：若基础 URL 以 `/graph` 风格为主，前端会自动拼接 `g0.expr=`；否则使用 `query=`
+  - 观测配置持久化与重置：
+    - 前端会将上述观测配置保存在浏览器 `localStorage`（键：`toolsObsConf`），刷新页面后自动恢复。
+    - 如需清空，使用“重置观测配置”按钮（位于“观测链接”折叠区底部），将恢复默认模板并清除本地存储。
+  - 模板预览与测试打开：
+    - 在“测试键名”中输入如 `timeout_ms`，下方会实时展示 PromQL 与日志查询的模板替换预览。
+    - 点击“测试打开指标/测试打开日志”，将使用当前配置与测试键名在新标签页打开对应查询，便于快速验证。
+  - 环境默认值（可选）：
+    - 支持通过 Vite 环境变量为观测配置预填默认值（在无 localStorage 时加载，且“重置观测配置”时也会优先恢复为这些默认值）：
+      - `VITE_OBS_PROM_BASE`
+      - `VITE_OBS_PROM_QUERY_TPL`
+      - `VITE_OBS_LOGS_BASE`
+      - `VITE_OBS_LOGS_QUERY_TPL`
+    - 使用方式：在 `.env.local` 或构建环境中设置上述变量，例如：
+      - `VITE_OBS_PROM_BASE=http://localhost:9090/graph`
+      - `VITE_OBS_LOGS_BASE=https://logs.example.com/search`
+  - 导入/导出配置：
+    - “导出配置”会将当前观测配置下载为 `toolsObsConf.json`，便于共享或备份。
+    - “导入配置”支持选择上述 JSON 文件进行恢复；导入后会立即写入 localStorage 并更新表单。
+    - 表单校验与提示：
+      - 基地址需以 `http/https` 开头，非法时会在输入框旁显示红色提示，并禁用测试按钮。
+      - 测试按钮在被禁用时，会通过 `title` 提示禁用原因；点击测试若地址非法会弹出警告。
+      - 导入 JSON 解析失败或键缺失时，保持现状并提示错误。
+
+    - 更多判定与样例：参见 `docs/tools_screenshots.md` 中的“启用态（文字说明）”及导入样例 `docs/assets/toolsObsConf.json`。
+
+- 操作步骤建议：
+  1) 填写 `tenant_id`、`tool_type`、`tool_name`、`params`、`options`；或使用“按类型模板”快速填充
+  2) 点击“预览合并策略”，在下方查看 `merged_options` 与“策略层级 Diff 表”
+  3) 使用“键名过滤/预设筛选/子键排序表达式”快速定位关注项
+  4) 如需跳转指标/日志，先在“观测链接”中配置基础URL与模板，再点击对应行“Obs”列的按钮
+  5) 若数据量大且滚动卡顿，启用“虚拟滚动”并调整高度；需要导出则使用 CSV 按钮
+
+- 性能与可用性说明：
+  - 虚拟滚动与分页互斥；仅在其一启用时生效
+
+- 截图/动图（示例占位）：
+  - 如下图片路径需先按 `docs/tools_screenshots.md` 指南采集素材保存至 `docs/assets/` 后即可显示。
+  - 面板总览：![tools overview](docs/assets/tools-overview.png)
+  - 观测链接表单：![obs form](docs/assets/tools-obs-form.png)
+  - 模板预览与测试打开：![preview test](docs/assets/tools-obs-preview-test.png)
+  - 导入/导出配置：![import export](docs/assets/tools-obs-import-export.png)
+  - URL 校验与提示：![validation](docs/assets/tools-obs-validation.png)
+  - 行级 Obs 跳转：![row actions](docs/assets/tools-obs-row-actions.png)
+  - 动图演示（可选）：![demo gif](docs/assets/tools-obs-demo.gif)
+    - 若未生成 GIF，可忽略此项；或直接使用已准备的静态帧序列目录 `docs/assets/gif_frames/`（frame01.png ~ frame06.png）进行阅读或后续合成。
+  - 当未配置观测基础 URL 时，“Obs”列按钮将禁用
+  - 子键排序仅在按 Merged 列排序时生效；表达式解析失败时自动降级
+  - 已去除重复的“启用虚拟滚动”标签，保持 UI 简洁
+
+- 模板示例（可根据你的环境调整）：
+  - Prometheus：`sum by (tool_type,tool_name) (increase(tools_errors_total{tenant="$tenant",tool_type="$type",tool_name="$name"}[5m]))`
+  - 日志：`{tenant="$tenant",tool_type="$type",tool_name="$name"} |= "$key"`
+
+> 提示：若你的监控/日志系统有固定空间或组织参数，可直接在“基础 URL”中带上预置的查询面板路径，只需在模板里替换上述占位符即可。
+
+### 模板版本与审计
+
+- 列出模板与版本：`GET /api/v1/db/templates`
+- 最近审计日志（环形缓冲区内存）：`GET /api/v1/db/audit`
+- 查询接口支持 `template_version`，缺省时自动选择该模板最新版本。
+
 
 ### 架构与核心模块（执行器）
 
@@ -728,6 +949,25 @@ data: [DONE]
   curl -s http://localhost:8000/metrics | head -n 30
   ```
   指标包含 `http_requests_total`、`http_request_duration_seconds` 等。访问接口后数值会递增。
+  
+  #### 前端健康点灯与悬浮详情
+  - 顶栏点灯每 10s 轮询 `GET /api/-/ready`，根据状态展示：ready/degraded/error/checking。
+  - 悬停点灯时请求 `GET /api/health` 展示依赖详情（Postgres/Redis/Qdrant/Ollama）。
+  - 文案使用 Vue-i18n：`health.overall`、`health.status.*`、`health.services.*`。
+  - 代码位置：`frontend/src/App.vue`、`frontend/src/i18n.ts`。
+  
+  #### RAG 预检软失败与前端提示
+  - 端点：`POST /api/v1/rag/preflight`，异常时返回 200 + JSON `{ ok: false, error: "..." }`（软失败），避免前端崩溃。
+  - 前端在 `Home.vue` 展示错误提示与“重试”按钮，i18n 键：`preflightErr`、`retry`。
+  - 代码位置：`frontend/src/views/Home.vue`、`frontend/src/i18n.ts`。
+  
+  #### CI 测试与环境变量
+  - 端到端最小化断言涵盖：
+    - 健康探针：`tests/test_health_and_preflight_ci.py`
+    - SSE 流式接口：`tests/test_sse_stream_ci.py`
+  - 环境变量：
+    - `API_BASE_URL`：测试基准地址（默认 `http://127.0.0.1:8000`；CI 设为 `http://localhost:8000`）。
+    - `SKIP_E2E=1`：在无法启动依赖的场景下跳过上述端到端测试。
   
   新增应用级指标（示例查询）：
   - 生成耗时（区分流式与否）：

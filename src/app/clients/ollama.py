@@ -39,7 +39,14 @@ async def generate(prompt: str, model: Optional[str] = None, *, timeout: Optiona
     }
     payload.update(kwargs or {})
     client = _get_client(timeout or settings.GENERATE_TIMEOUT)
-    resp = await client.post(url, json=payload)
+    # Use generous per-request timeout: long read window for inference; moderate connect/write/pool
+    req_timeout = httpx.Timeout(
+        connect=10.0,
+        read=(timeout or settings.GENERATE_TIMEOUT),
+        write=10.0,
+        pool=10.0,
+    )
+    resp = await client.post(url, json=payload, timeout=req_timeout)
     resp.raise_for_status()
     return resp.json()
 
@@ -48,12 +55,20 @@ async def embeddings(texts: List[str], model: Optional[str] = None, *, timeout: 
     url = f"http://{settings.OLLAMA_HOST}:{settings.OLLAMA_PORT}/api/embeddings"
     vectors: List[List[float]] = []
     client = _get_client(timeout or settings.EMBED_TIMEOUT)
+    req_timeout = httpx.Timeout(
+        connect=10.0,
+        read=(timeout or settings.EMBED_TIMEOUT),
+        write=10.0,
+        pool=10.0,
+    )
+    # Prefer a dedicated embedding model if configured
+    chosen_model = model or getattr(settings, "OLLAMA_EMBED_MODEL", None) or getattr(settings, "OLLAMA_MODEL", "llama3")
     for text in texts:
         payload = {
-            "model": model or getattr(settings, "OLLAMA_MODEL", "llama3"),
+            "model": chosen_model,
             "prompt": text,
         }
-        resp = await client.post(url, json=payload)
+        resp = await client.post(url, json=payload, timeout=req_timeout)
         resp.raise_for_status()
         data = resp.json()
         vectors.append(data.get("embedding", []))

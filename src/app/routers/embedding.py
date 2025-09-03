@@ -36,7 +36,9 @@ class SearchRequest(BaseModel):
 async def embed(req: EmbedRequest) -> Dict[str, Any]:
     if not req.texts:
         raise HTTPException(status_code=400, detail="texts is required")
-    vectors = await ollama.embeddings(req.texts, model=req.model or settings.OLLAMA_MODEL)
+    # 优先使用专用嵌入模型；仅当显式传入 model 时才覆盖
+    chosen_model = (req.model or getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
+    vectors = await ollama.embeddings(req.texts, model=chosen_model)
     dim = len(vectors[0]) if vectors and vectors[0] else 0
     return {"dimension": dim, "vectors": vectors}
 
@@ -46,7 +48,9 @@ async def upsert(req: UpsertRequest) -> Dict[str, Any]:
     if not req.texts:
         raise HTTPException(status_code=400, detail="texts is required")
     coll = req.collection or settings.QDRANT_COLLECTION
-    vectors = await ollama.embeddings(req.texts, model=req.model or settings.OLLAMA_MODEL)
+    # 使用专用嵌入模型，除非显式指定
+    chosen_model = (req.model or getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
+    vectors = await ollama.embeddings(req.texts, model=chosen_model)
     if not vectors or not vectors[0]:
         raise HTTPException(status_code=500, detail="failed to get embeddings")
     dim = len(vectors[0])
@@ -63,13 +67,39 @@ async def search(req: SearchRequest) -> Dict[str, Any]:
     coll = req.collection or settings.QDRANT_COLLECTION
     top_k = req.top_k or settings.DEFAULT_TOP_K
     # embed query
-    qvecs = await ollama.embeddings([req.query], model=req.model or settings.OLLAMA_MODEL)
+    chosen_model = (req.model or getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
+    qvecs = await ollama.embeddings([req.query], model=chosen_model)
     if not qvecs or not qvecs[0]:
         raise HTTPException(status_code=500, detail="failed to get query embedding")
+    dim = len(qvecs[0])
+    # If collection exists, validate expected vector dimension to avoid opaque 400 from Qdrant
+    if qcli.collection_exists(coll):
+        try:
+            info = qcli.get_collection_info(coll)
+            # best-effort extract size
+            expected = (
+                info.get("config", {}).get("params", {}).get("vectors", {}).get("size")
+                or info.get("params", {}).get("vectors", {}).get("size")
+                or info.get("params", {}).get("size")
+                or (info.get("vectors", {}) if isinstance(info.get("vectors", {}), dict) else {}).get("size")
+                or 0
+            )
+            expected = int(expected or 0)
+            if expected and expected != dim:
+                raise HTTPException(status_code=400, detail=f"vector dimension mismatch: collection expects {expected}, query has {dim}")
+        except HTTPException:
+            raise
+        except Exception:
+            # proceed; server-side Qdrant may still return detailed error
+            pass
     # if collection is missing, return empty
     if not qcli.collection_exists(coll):
         return {"collection": coll, "matches": []}
-    scored = qcli.search_vectors(coll, query=qvecs[0], top_k=top_k, filters=req.filters)
+    try:
+        scored = qcli.search_vectors(coll, query=qvecs[0], top_k=top_k, filters=req.filters)
+    except Exception as e:
+        # Surface upstream errors as 400 for easier client debugging
+        raise HTTPException(status_code=400, detail=f"qdrant search failed: {e}")
     # serialize
     matches = [
         {

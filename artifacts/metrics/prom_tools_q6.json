@@ -1,1 +1,1 @@
-{"status":"success","data":{"resultType":"vector","result":[{"metric":{"tenant":"demo","tool_name":"simple","tool_type":"http_get"},"value":[1755769039.317,"0"]},{"metric":{"tenant":"demo","tool_name":"simple","tool_type":"http_post"},"value":[1755769039.317,"2.6666666666666665"]}]}}
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"tenant":"demo","tool_name":"simple","tool_type":"http_get"},"value":[1756353294.508,"0"]},{"metric":{"tenant":"demo","tool_name":"simple","tool_type":"http_post"},"value":[1756353294.508,"2.6669037247755356"]}]}}

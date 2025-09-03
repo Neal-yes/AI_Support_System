@@ -26,6 +26,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         rid = getattr(request.state, "request_id", None)
         # validation and HTTP errors as warning
+        # Try to capture a truncated request body preview for diagnostics
+        body_preview: Optional[str] = None
+        try:
+            raw = await request.body()
+            if raw:
+                body_preview = raw[:500].decode("utf-8", errors="replace")
+        except Exception:
+            body_preview = None
         logger.warning(
             "http_error",
             extra={
@@ -34,6 +42,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "detail": exc.detail,
                 "path": request.url.path,
                 "method": request.method,
+                "body_preview": body_preview,
             },
         )
         return _json_error(exc.status_code, "HTTPError", exc.detail, rid)
@@ -41,6 +50,13 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         rid = getattr(request.state, "request_id", None)
+        body_preview: Optional[str] = None
+        try:
+            raw = await request.body()
+            if raw:
+                body_preview = raw[:500].decode("utf-8", errors="replace")
+        except Exception:
+            body_preview = None
         logger.warning(
             "validation_error",
             extra={
@@ -48,6 +64,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "errors": exc.errors(),
                 "path": request.url.path,
                 "method": request.method,
+                "body_preview": body_preview,
             },
         )
         return _json_error(422, "ValidationError", exc.errors(), rid)
@@ -55,12 +72,20 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         rid = getattr(request.state, "request_id", None)
+        body_preview: Optional[str] = None
+        try:
+            raw = await request.body()
+            if raw:
+                body_preview = raw[:500].decode("utf-8", errors="replace")
+        except Exception:
+            body_preview = None
         logger.exception(
             "unhandled_exception",
             extra={
                 "request_id": rid,
                 "path": request.url.path,
                 "method": request.method,
+                "body_preview": body_preview,
             },
         )
         # 不暴露内部细节，只给出通用提示

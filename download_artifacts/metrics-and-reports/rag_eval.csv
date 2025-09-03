@@ -1,0 +1,54 @@
+query,has_match,top1_score,mean_score,count
+如何启动本地服务？,True,0.890954,0.821014,5
+如何配置环境变量以连接 Postgres？,True,0.890435,0.814895,5
+如何导入 demo_faq.jsonl 数据集？,True,0.939687,0.817758,5
+如何执行 RAG 评测并查看结果？,True,0.918712,0.840630,5
+如何查看 Prometheus 指标地址？,True,0.963049,0.814657,5
+如何在 Grafana 查看仪表盘？,True,0.883675,0.805509,5
+如何触发 GitHub Actions CI？,True,0.877131,0.796282,5
+失败的 CI 日志在哪里查看？,True,0.864691,0.815941,5
+如何运行 pytest 单元测试？,True,0.882177,0.802803,5
+如何启动 docker-compose 集成环境？,True,0.876545,0.809669,5
+如何备份 Qdrant collection？,True,0.866389,0.798301,5
+如何还原 Qdrant collection 备份？,True,0.877883,0.819210,5
+如何准备示例嵌入 prepare_demo_embeddings.sh？,True,0.854501,0.764334,5
+如何进行 Smoke ask 测试？,True,0.773270,0.729714,5
+如何设置 RAG 的 top_k 参数？,True,0.886475,0.790970,5
+如何调整 RAG 门禁阈值？,True,0.868249,0.827029,5
+如何导出 rag_eval.csv 报告？,True,0.868690,0.791842,5
+如何查看 ask_plain 的响应示例？,True,0.867823,0.776091,5
+如何使用 /api/v1/ask 的 RAG 模式？,True,0.862870,0.807196,5
+如何使用 /api/v1/ask 的 plain 模式？,True,0.862234,0.795584,5
+如何修改 README 文档并提交？,True,0.905521,0.824719,5
+如何在 FastAPI 中新增路由？,True,0.874193,0.801306,5
+如何在 main.py 挂载新路由？,True,0.880410,0.779358,5
+如何配置 CORS 设置？,True,0.857554,0.795154,5
+如何为接口添加 Pydantic 模型？,True,0.894436,0.812373,5
+如何在 src/app/core/metrics.py 新增指标？,True,0.890162,0.804943,5
+如何暴露 Prometheus 指标端点？,True,0.926638,0.822057,5
+如何清理 artifacts/metrics 目录？,True,0.873566,0.780362,5
+如何阅读 scripts/rag_eval_gate.sh 源码？,True,0.845086,0.787114,5
+如何通过 curl 调用 /chat/rag_eval？,True,0.807166,0.736765,5
+如何设置 API_BASE 环境变量？,True,0.889730,0.803766,5
+如何查看 e2e-metrics 日志？,True,0.912452,0.799073,5
+如何下载 CI 运行产生的 artifacts？,True,0.889243,0.807924,5
+如何在 requirements.txt 添加依赖？,True,0.883228,0.788825,5
+如何在本地启用虚拟环境？,True,0.876796,0.806891,5
+如何配置日志级别为 INFO？,True,0.890871,0.787491,5
+如何排查 5xx 错误的常见原因？,True,0.951875,0.822650,5
+如何限制工具网关的速率？,True,0.877168,0.805910,5
+如何给工具网关加缓存？,True,0.847523,0.796588,5
+如何配置熔断阈值与冷却时间？,True,0.870097,0.811939,5
+如何以 JSON 方式调用 /api/v1/tools/invoke？,True,0.789922,0.733886,5
+工具网关支持哪些 tool_type？,True,0.813784,0.757539,5
+如何使用 HTTP GET 工具？,True,0.872825,0.809600,5
+如何使用 HTTP POST 工具？,True,0.865533,0.808854,5
+如何使用 DB_QUERY 模板工具？,True,0.855161,0.787511,5
+DB_QUERY 工具如何开启 explain？,True,0.821878,0.748302,5
+DB_QUERY 工具如何限制返回行数？,True,0.839969,0.748024,5
+如何为 DB_QUERY 传入参数化占位符？,True,0.862499,0.765236,5
+DB_QUERY 为何只允许 SELECT？,True,0.716491,0.669544,5
+如何查看 db_query 相关 Prometheus 指标？,True,0.926051,0.811464,5
+
+collection,total,hit_ratio,avg_top1,avg_mean_score,top_k
+metrics_demo_1d,50,1.000000,0.871665,0.793092,5

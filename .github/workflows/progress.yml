@@ -1,0 +1,123 @@
+name: Progress Report
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  generate-progress:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (workflow_run)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Checkout (push/pr)
+        if: ${{ github.event_name != 'workflow_run' }}
+        uses: actions/checkout@v4
+
+      - name: Prepare metrics dir
+        run: |
+          mkdir -p artifacts/metrics
+
+      - name: Download rag-eval-json from triggering CI run
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: rag-eval-json
+          path: artifacts/metrics
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Download backup-health-json from triggering CI run
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: backup-health-json
+          path: artifacts/metrics
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install progress deps (matplotlib)
+        run: |
+          python -m pip install --upgrade pip
+          pip install matplotlib
+
+      - name: Generate progress artifacts (radar/kanban/summary)
+        env:
+          # Allow override via repo variables or secrets if needed
+          PROG_M1: ${{ vars.PROG_M1 || '65' }}
+          PROG_M15: ${{ vars.PROG_M15 || '45' }}
+          PROG_M2: ${{ vars.PROG_M2 || '15' }}
+        run: |
+          python scripts/gen_progress_report.py
+
+      - name: Upload progress radar png
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-radar-png
+          path: artifacts/progress/progress_radar.png
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload progress kanban md
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-kanban-md
+          path: artifacts/progress/kanban.md
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload progress summary json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-summary-json
+          path: artifacts/progress/summary.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload progress bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-bundle
+          path: artifacts/progress/*
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Append to Job Summary
+        if: always()
+        run: |
+          echo "## Progress Report" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/progress/summary.json ]; then
+            echo "- summary.json present" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- summary.json missing" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f artifacts/progress/progress_radar.png ]; then
+            echo "- radar: artifacts/progress/progress_radar.png (see artifacts)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f artifacts/progress/kanban.md ]; then
+            echo "- kanban: artifacts/progress/kanban.md (see artifacts)" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,6 @@
+{
+  "promBase": "http://localhost:9090",
+  "promQueryTpl": "sum(rate(tool_invocations_total{tenant=\"$tenant\",tool_type=\"$type\",tool_name=\"$name\",option_key=\"$key\"}[5m]))",
+  "logsBase": "https://logs.example.com/search",
+  "logsQueryTpl": "key:\"$key\" AND tenant:\"$tenant\" AND tool:\"$type.$name\""
+}

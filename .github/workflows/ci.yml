@@ -119,6 +119,29 @@ jobs:
           API_BASE_URL: http://localhost:8000
         run: pytest -q -k 'not sse_stream_ci'
 
+      - name: Backup health check (Qdrant collections)
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/metrics
+          URL="http://localhost:6333/collections"
+          echo "[CI] Fetching Qdrant collections from ${URL}"
+          if curl -fsS "$URL" -o artifacts/metrics/backup_health.json; then
+            echo "[CI] Wrote artifacts/metrics/backup_health.json"
+          else
+            echo "{\"error\":\"qdrant_unreachable\"}" > artifacts/metrics/backup_health.json
+            echo "[CI][warn] Qdrant unreachable; wrote fallback backup_health.json"
+          fi
+
+      - name: Upload backup health json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-health-json
+          path: artifacts/metrics/backup_health.json
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Prepare RAG demo embeddings
         if: false
         env:

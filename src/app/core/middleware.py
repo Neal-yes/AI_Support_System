@@ -6,11 +6,13 @@ import uuid
 from typing import Callable
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 from src.app.core.metrics import REQUEST_COUNT, REQUEST_LATENCY
 from src.app.config import settings
 import re
 from typing import Optional
+import json
+import random
 
 try:
     import jwt  # PyJWT
@@ -44,18 +46,55 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             )
             raise
         duration_ms = (time.perf_counter() - start) * 1000
-        # 结构化访问日志
-        logger.info(
-            "request_done",
-            extra={
-                "request_id": request_id,
-                "path": request.url.path,
-                "method": request.method,
-                "status_code": response.status_code,
-                "duration_ms": round(duration_ms, 2),
-                "tenant": tenant,
-            },
-        )
+        # 捕获响应体（为日志和注入 request_id 做准备）。StreamingResponse 不应消费其迭代器以免破坏流。
+        raw_body: Optional[bytes] = None
+        is_streaming = isinstance(response, StreamingResponse)
+        if not is_streaming:
+            try:
+                # JSONResponse/Plain Response 通常有 .body
+                raw_body = getattr(response, "body", None)
+                if raw_body is None and hasattr(response, "render"):
+                    raw_body = await response.render(None)  # type: ignore
+            except Exception:
+                raw_body = None
+
+        # 在 2xx/3xx 且 JSON 响应时注入 request_id（若为对象）
+        if not is_streaming:
+            try:
+                ct = response.headers.get("content-type", "").lower()
+                if response.status_code < 400 and raw_body and ct.startswith("application/json"):
+                    data = json.loads(raw_body.decode("utf-8", errors="replace"))
+                    if isinstance(data, dict) and "request_id" not in data:
+                        data["request_id"] = request_id
+                        new_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+                        _hdrs = {k: v for k, v in dict(response.headers).items() if k.lower() != "content-length"}
+                        response = Response(
+                            content=new_body,
+                            status_code=response.status_code,
+                            headers=_hdrs,
+                            media_type="application/json",
+                        )
+                        raw_body = new_body
+            except Exception:
+                pass
+
+        # 结构化访问日志（按需附带响应体预览）
+        extra_fields = {
+            "request_id": request_id,
+            "path": request.url.path,
+            "method": request.method,
+            "status_code": response.status_code,
+            "duration_ms": round(duration_ms, 2),
+            "tenant": tenant,
+        }
+        # 仅 5xx 或按采样率记录响应体截断
+        should_sample = settings.LOG_RESPONSE_BODY_SAMPLE_RATE > 0.0 and (random.random() < settings.LOG_RESPONSE_BODY_SAMPLE_RATE)
+        if raw_body is not None and (should_sample or (settings.LOG_RESPONSE_BODY_ON_5XX and 500 <= response.status_code <= 599)):
+            try:
+                extra_fields["resp_body_preview"] = raw_body[:500].decode("utf-8", errors="replace")
+            except Exception:
+                extra_fields["resp_body_preview"] = "<non-text body>"
+        logger.info("request_done", extra=extra_fields)
         # Prometheus metrics
         labels = (request.method, request.url.path, str(response.status_code))
         REQUEST_COUNT.labels(*labels).inc()
