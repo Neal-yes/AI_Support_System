@@ -1,0 +1,56 @@
+<testsuites id="" name="" tests="21" failures="0" skipped="0" errors="0" time="9.572066">
+<testsuite name="tools-obs.spec.ts" timestamp="2025-09-03T01:55:17.165Z" hostname="chromium" tests="6" failures="0" skipped="0" time="4.032" errors="0">
+<testcase name="Tools 观测配置 E2E › 非法/合法 URL、按钮状态与生成链接" classname="tools-obs.spec.ts" time="0.833">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导入配置后字段回填与按钮联动" classname="tools-obs.spec.ts" time="0.615">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导出配置 JSON 内容正确" classname="tools-obs.spec.ts" time="0.905">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导出（空字段）结构与文件名正确" classname="tools-obs.spec.ts" time="0.581">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导入无效 JSON 给出错误提示" classname="tools-obs.spec.ts" time="0.405">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 模板特殊字符与超长字符串 导出/导入 一致性" classname="tools-obs.spec.ts" time="0.693">
+</testcase>
+</testsuite>
+<testsuite name="version-badge.spec.ts" timestamp="2025-09-03T01:55:17.165Z" hostname="chromium" tests="1" failures="0" skipped="0" time="0.592" errors="0">
+<testcase name="shows version badge in topbar" classname="version-badge.spec.ts" time="0.592">
+</testcase>
+</testsuite>
+<testsuite name="tools-obs.spec.ts" timestamp="2025-09-03T01:55:17.165Z" hostname="firefox" tests="6" failures="0" skipped="0" time="5.298" errors="0">
+<testcase name="Tools 观测配置 E2E › 非法/合法 URL、按钮状态与生成链接" classname="tools-obs.spec.ts" time="2.403">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导入配置后字段回填与按钮联动" classname="tools-obs.spec.ts" time="0.667">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导出配置 JSON 内容正确" classname="tools-obs.spec.ts" time="0.566">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导出（空字段）结构与文件名正确" classname="tools-obs.spec.ts" time="0.504">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导入无效 JSON 给出错误提示" classname="tools-obs.spec.ts" time="0.551">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 模板特殊字符与超长字符串 导出/导入 一致性" classname="tools-obs.spec.ts" time="0.607">
+</testcase>
+</testsuite>
+<testsuite name="version-badge.spec.ts" timestamp="2025-09-03T01:55:17.165Z" hostname="firefox" tests="1" failures="0" skipped="0" time="2.924" errors="0">
+<testcase name="shows version badge in topbar" classname="version-badge.spec.ts" time="2.924">
+</testcase>
+</testsuite>
+<testsuite name="tools-obs.spec.ts" timestamp="2025-09-03T01:55:17.165Z" hostname="webkit" tests="6" failures="0" skipped="0" time="5.047" errors="0">
+<testcase name="Tools 观测配置 E2E › 非法/合法 URL、按钮状态与生成链接" classname="tools-obs.spec.ts" time="1.705">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导入配置后字段回填与按钮联动" classname="tools-obs.spec.ts" time="1.152">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导出配置 JSON 内容正确" classname="tools-obs.spec.ts" time="0.796">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导出（空字段）结构与文件名正确" classname="tools-obs.spec.ts" time="0.456">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 导入无效 JSON 给出错误提示" classname="tools-obs.spec.ts" time="0.375">
+</testcase>
+<testcase name="Tools 观测配置 E2E › 模板特殊字符与超长字符串 导出/导入 一致性" classname="tools-obs.spec.ts" time="0.563">
+</testcase>
+</testsuite>
+<testsuite name="version-badge.spec.ts" timestamp="2025-09-03T01:55:17.165Z" hostname="webkit" tests="1" failures="0" skipped="0" time="0.867" errors="0">
+<testcase name="shows version badge in topbar" classname="version-badge.spec.ts" time="0.867">
+</testcase>
+</testsuite>
+</testsuites>

@@ -1,0 +1,2 @@
+Radar chart was not generated. Reason: matplotlib is required to render radar chart
+Tip: install a compatible matplotlib (e.g. in a venv) or run in CI where it is pre-installed.

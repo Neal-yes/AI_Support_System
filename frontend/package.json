@@ -1,0 +1,34 @@
+{
+  "name": "ai-support-frontend",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5173",
+    "preview:5177": "vite preview --port 5177 --host",
+    "test": "vitest",
+    "pretest:e2e": "npm run build",
+    "test:e2e": "playwright test",
+    "pree2e": "npm run build",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed --project=chromium"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "event-source-polyfill": "^1.0.31",
+    "pinia": "^2.3.1",
+    "vue": "^3.4.38",
+    "vue-i18n": "^9.14.5",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.2",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@playwright/test": "^1.47.2",
+    "vitest": "^2.1.1",
+    "typescript": "~5.5.4",
+    "vite": "^7.1.3"
+  }
+}

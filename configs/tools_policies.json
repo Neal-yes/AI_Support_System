@@ -1,0 +1,39 @@
+{
+  "default": {
+    "options": {
+      "timeout_ms": 3000,
+      "rate_limit_per_sec": 5,
+      "circuit_threshold": 3,
+      "circuit_cooldown_ms": 5000,
+      "retry_max": 1,
+      "retry_backoff_ms": 150,
+      "cache_ttl_ms": 0,
+      "resp_max_chars": 2048
+    }
+  },
+  "tenants": {
+    "default": {
+      "options": {},
+      "tools": {
+        "http_post": {
+          "options": { "timeout_ms": 5000 },
+          "names": {
+            "simple": { "options": {} }
+          }
+        },
+        "http_get": {
+          "options": { "timeout_ms": 3000 },
+          "names": {
+            "simple": { "options": { "resp_max_chars": 4096 } }
+          }
+        },
+        "db_query": {
+          "options": { "timeout_ms": 3000, "max_rows": 1000 },
+          "names": {
+            "template": { "options": {} }
+          }
+        }
+      }
+    }
+  }
+}

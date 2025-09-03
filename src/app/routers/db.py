@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import Any, Dict, Optional, List
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Query
 from pydantic import BaseModel, Field
 
 from src.app.clients.postgres import get_connection
@@ -15,15 +16,18 @@ from src.app.config import settings
 
 router = APIRouter(prefix="/api/v1/db", tags=["db"])
 
-# ---- Templates (minimal, built-in for now) ----
+logger = logging.getLogger(__name__)
+
+# ---- Templates (built-in) ----
 # NOTE: Only SELECT statements are allowed; parameters must be named (psycopg style: %(name)s)
+# Primary shape is FLAT for compatibility with tests: {template_id: {sql,max_rows,timeout_ms}}
+# Router supports both flat and versioned: {template_id: {version: {sql,max_rows,timeout_ms}}}
 TEMPLATES: Dict[str, Dict[str, Any]] = {
     "echo_int": {
         "sql": "SELECT %(x)s::int AS x",
         "max_rows": 1000,
         "timeout_ms": 3000,
-        "version": "v1",
-    },
+    }
 }
 
 FORBIDDEN_PATTERN = re.compile(
@@ -49,6 +53,7 @@ def wrap_with_limit(sql: str, max_rows: int) -> str:
 
 class DBTemplateRequest(BaseModel):
     template_id: str = Field(..., description="Registered template id")
+    template_version: Optional[str] = Field(None, description="Optional explicit template version (e.g., v1)")
     params: Dict[str, Any] = Field(default_factory=dict)
     explain: Optional[bool] = False
 
@@ -66,16 +71,32 @@ async def query_template(
     payload: DBTemplateRequest,
     x_tenant_id: Optional[str] = Header(default="", alias=settings.HEADER_TENANT_KEY),
 ):
-    tpl = TEMPLATES.get(payload.template_id)
+    tpl_entry = TEMPLATES.get(payload.template_id)
     tenant = x_tenant_id or "default"
-    if not tpl:
+    if not tpl_entry:
         DB_QUERY_TOTAL.labels(template=payload.template_id, tenant=tenant, result="rejected").inc()
         raise ValueError("unknown template_id")
 
+    # Normalize to versioned dict for internal logic
+    if "sql" in tpl_entry:
+        # flat shape -> synthesize single version
+        tpl_versions: Dict[str, Dict[str, Any]] = {"v1": tpl_entry}
+    else:
+        # already versioned
+        tpl_versions = tpl_entry  # type: ignore[assignment]
+
+    # resolve version (explicit or latest by lexical order)
+    version_keys = sorted(list(tpl_versions.keys()))
+    selected_version = payload.template_version if (payload.template_version and payload.template_version in tpl_versions) else (version_keys[-1] if version_keys else None)
+    if not selected_version:
+        DB_QUERY_TOTAL.labels(template=payload.template_id, tenant=tenant, result="rejected").inc()
+        raise ValueError("no available template version")
+
+    tpl = tpl_versions[selected_version]
     sql = str(tpl.get("sql", ""))
     max_rows = int(tpl.get("max_rows", 1000))
     timeout_ms = int(tpl.get("timeout_ms", 3000))
-    version = str(tpl.get("version", "v1"))
+    version = str(selected_version)
 
     # Validation
     try:
@@ -105,6 +126,22 @@ async def query_template(
     finally:
         DB_QUERY_SECONDS.labels(template=payload.template_id, tenant=tenant).observe(time.perf_counter() - started)
 
+    # audit log (in-process)
+    try:
+        logger.info(
+            "db_template_query",
+            extra={
+                "event": "db_template_query",
+                "tenant": tenant,
+                "template_id": payload.template_id,
+                "template_version": version,
+                "explain": bool(payload.explain),
+                "row_count": len(rows),
+            },
+        )
+    except Exception:
+        pass
+
     return DBTemplateResponse(
         template_id=payload.template_id,
         template_version=version,
@@ -112,3 +149,37 @@ async def query_template(
         rows=rows,
         request_id=None,
     )
+
+
+@router.get("/templates")
+async def list_templates() -> Dict[str, List[str]]:
+    """List available template ids and their versions."""
+    out: Dict[str, List[str]] = {}
+    for tid, entry in TEMPLATES.items():
+        if isinstance(entry, dict) and "sql" in entry:
+            out[tid] = ["v1"]
+        else:
+            out[tid] = sorted(list(entry.keys()))  # type: ignore[arg-type]
+    return out
+
+
+_AUDIT_RING: List[Dict[str, Any]] = []
+_AUDIT_MAX = 200
+
+
+def _audit_push(entry: Dict[str, Any]) -> None:
+    try:
+        _AUDIT_RING.append({**entry, "ts": time.time()})
+        if len(_AUDIT_RING) > _AUDIT_MAX:
+            del _AUDIT_RING[: len(_AUDIT_RING) - _AUDIT_MAX]
+    except Exception:
+        pass
+
+
+@router.get("/audit")
+async def list_audit(limit: int = Query(default=50, ge=1, le=200)) -> List[Dict[str, Any]]:
+    """Return recent db template query audit entries (best-effort)."""
+    try:
+        return list(_AUDIT_RING[-limit:])
+    except Exception:
+        return []

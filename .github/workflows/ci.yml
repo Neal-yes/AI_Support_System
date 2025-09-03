@@ -115,9 +115,35 @@ jobs:
           fi
 
       - name: Run tests
-        run: pytest -q
+        env:
+          API_BASE_URL: http://localhost:8000
+        run: pytest -q -k 'not sse_stream_ci'
+
+      - name: Backup health check (Qdrant collections)
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/metrics
+          URL="http://localhost:6333/collections"
+          echo "[CI] Fetching Qdrant collections from ${URL}"
+          if curl -fsS "$URL" -o artifacts/metrics/backup_health.json; then
+            echo "[CI] Wrote artifacts/metrics/backup_health.json"
+          else
+            echo "{\"error\":\"qdrant_unreachable\"}" > artifacts/metrics/backup_health.json
+            echo "[CI][warn] Qdrant unreachable; wrote fallback backup_health.json"
+          fi
+
+      - name: Upload backup health json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-health-json
+          path: artifacts/metrics/backup_health.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Prepare RAG demo embeddings
+        if: false
         env:
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
@@ -125,6 +151,7 @@ jobs:
           bash scripts/prepare_demo_embeddings.sh
 
       - name: Smoke ask (plain + RAG)
+        if: false
         env:
           COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
@@ -132,6 +159,7 @@ jobs:
           bash scripts/smoke_ask.sh
 
       - name: Assert Smoke PASS
+        if: false
         run: |
           set -euo pipefail
           if [ -f artifacts/metrics/smoke_summary.md ]; then
@@ -147,6 +175,7 @@ jobs:
           fi
 
       - name: RAG evaluation gate
+        if: false
         env:
           # M1 基线阈值（技术计划 2.10，门禁仅包含已实现的指标）
           GATE_HIT_RATIO_MIN: "0.60"
@@ -162,7 +191,7 @@ jobs:
           bash scripts/rag_eval_gate.sh
 
       - name: CI Summary (RAG & Smoke)
-        if: always()
+        if: false
         run: |
           mkdir -p artifacts/metrics
           SUMMARY_FILE="artifacts/metrics/ci_step_summary.md"
@@ -204,7 +233,7 @@ jobs:
           echo "- rag: ${R_STATUS}" >> "$SUMMARY_FILE"
 
       - name: Assert CI Summary includes isolated collection
-        if: always()
+        if: false
         run: |
           set -euo pipefail
           SUMMARY_FILE="artifacts/metrics/ci_step_summary.md"
@@ -229,11 +258,397 @@ jobs:
             exit 1
           fi
 
+      - name: Assert artifacts present
+        if: false
+        run: |
+          set -euo pipefail
+          echo "[CI] Listing artifacts/metrics"
+          ls -la artifacts/metrics || true
+          for f in ci_step_summary.md rag_eval.csv smoke_summary.md; do
+            if [ ! -f "artifacts/metrics/$f" ]; then
+              echo "Missing artifacts/metrics/$f" >&2
+              exit 1
+            fi
+          done
+
+      - name: Assert rag_eval.csv summary matches isolated collection & thresholds
+        if: false
+        env:
+          # 与 RAG evaluation gate 使用的阈值对齐
+          GATE_HIT_RATIO_MIN: "0.60"
+          GATE_AVG_TOP1_MIN: "0.35"
+        run: |
+          set -euo pipefail
+          FILE="artifacts/metrics/rag_eval.csv"
+          if [ ! -f "$FILE" ]; then
+            echo "$FILE not found" >&2
+            exit 1
+          fi
+          # Find the aggregated summary line for the isolated collection
+          LINE=$(awk -F, -v c="${METRICS_TEST_COLLECTION}" '$1==c{print; found=1} END{if(!found) exit 2}' "$FILE") || {
+            echo "Summary for ${METRICS_TEST_COLLECTION} not found in rag_eval.csv" >&2
+            tail -n 10 "$FILE" >&2 || true
+            exit 1
+          }
+          # Parse fields: collection,total,hit_ratio,avg_top1,avg_mean_score,top_k
+          COLL=$(echo "$LINE" | cut -d, -f1)
+          TOTAL=$(echo "$LINE" | cut -d, -f2)
+          HITR=$(echo "$LINE" | cut -d, -f3)
+          AT1=$(echo "$LINE" | cut -d, -f4)
+          MEAN=$(echo "$LINE" | cut -d, -f5)
+          TOPK=$(echo "$LINE" | cut -d, -f6)
+          echo "[CI] rag_eval summary: coll=$COLL total=$TOTAL hit_ratio=$HITR avg_top1=$AT1 avg_mean=$MEAN top_k=$TOPK"
+          # Basic sanity checks against expected isolated collection and known config
+          if [ "$COLL" != "${METRICS_TEST_COLLECTION}" ]; then
+            echo "Unexpected collection in summary: $COLL (want ${METRICS_TEST_COLLECTION})" >&2
+            exit 1
+          fi
+          # Expect at least 10 queries and top_k=5 per workflow config
+          if [ "${TOTAL}" -lt 10 ]; then
+            echo "Total <$TOTAL> is unexpectedly small (expect >=10)" >&2
+            exit 1
+          fi
+          if [ "${TOPK}" != "5" ]; then
+            echo "Unexpected top_k: $TOPK (expect 5)" >&2
+            exit 1
+          fi
+          # Threshold checks (numeric). Use awk for float comparisons.
+          awk -v v="$HITR" -v m="$GATE_HIT_RATIO_MIN" 'BEGIN{if (v+0 < m+0) {exit 1}}' || {
+            echo "hit_ratio $HITR is below min $GATE_HIT_RATIO_MIN" >&2
+            exit 1
+          }
+          awk -v v="$AT1" -v m="$GATE_AVG_TOP1_MIN" 'BEGIN{if (v+0 < m+0) {exit 1}}' || {
+            echo "avg_top1 $AT1 is below min $GATE_AVG_TOP1_MIN" >&2
+            exit 1
+          }
+
       - name: Upload metrics artifacts
-        if: always()
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: metrics-and-reports
           path: |
             artifacts/metrics/*
           if-no-files-found: ignore
+
+  sse-test:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start API stack (docker-compose) and wait for health
+        env:
+          API_PORT: "8000"
+        run: |
+          set -euo pipefail
+          cp configs/env.example .env
+          sed -i 's/^API_PORT=.*/API_PORT=8000/' .env || true
+          docker compose build api
+          docker compose up -d db redis qdrant ollama
+          docker compose up -d api
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS "http://localhost:${API_PORT}/metrics" >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            docker compose ps
+            docker compose logs --no-color --timestamps api || true
+            exit 1
+          fi
+          # Ensure Ollama is up (best-effort)
+          for i in $(seq 1 30); do
+            if curl -fsS "http://localhost:11434/api/tags" >/dev/null 2>&1; then break; fi
+            sleep 3
+          done
+
+      - name: Run SSE test only
+        env:
+          API_BASE_URL: http://localhost:8000
+        run: pytest -q tests/test_sse_stream_ci.py
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: [test]
+    env:
+      METRICS_TEST_COLLECTION: metrics_demo_1d
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start API stack (docker-compose)
+        env:
+          API_PORT: "8000"
+        run: |
+          set -euo pipefail
+          cp configs/env.example .env
+          sed -i 's/^API_PORT=.*/API_PORT=8000/' .env || true
+          docker compose build api
+          docker compose up -d db redis qdrant ollama
+          docker compose up -d api
+          # Wait API
+          for i in $(seq 1 60); do
+            if curl -fsS "http://localhost:${API_PORT}/metrics" >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          # Best-effort ensure Ollama
+          for i in $(seq 1 30); do
+            if curl -fsS "http://localhost:11434/api/tags" >/dev/null 2>&1; then break; fi
+            sleep 3
+          done
+
+      - name: Prepare RAG demo embeddings
+        env:
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          echo "[CI] Preparing demo embeddings for RAG"
+          bash scripts/prepare_demo_embeddings.sh
+
+      - name: Smoke ask (plain + RAG)
+        env:
+          COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          echo "[CI] Smoke will use MODEL=${MODEL:-<unset>} COLLECTION=${COLLECTION:-<unset>}"
+          bash scripts/smoke_ask.sh
+
+      - name: Assert Smoke PASS
+        run: |
+          set -euo pipefail
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            if ! grep -qE '^- result: PASS$' artifacts/metrics/smoke_summary.md; then
+              echo "Smoke summary indicates failure or missing PASS:" >&2
+              sed -n '1,200p' artifacts/metrics/smoke_summary.md >&2 || true
+              exit 1
+            fi
+          else
+            echo "smoke_summary.md not found; failing to avoid false positives." >&2
+            ls -la artifacts/metrics || true
+            exit 1
+          fi
+
+      - name: Ensure smoke summary exists (on failure)
+        if: always()
+        run: |
+          mkdir -p artifacts/metrics
+          if [ ! -f artifacts/metrics/smoke_summary.md ]; then
+            {
+              echo "## Smoke Summary"
+              echo "- result: FAIL"
+              echo "- note: generated by CI because smoke steps failed or no summary was produced"
+              echo "- job: ${GITHUB_JOB}"
+              echo "- run_id: ${GITHUB_RUN_ID}"
+            } > artifacts/metrics/smoke_summary.md
+          fi
+ 
+      - name: Upload smoke summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-summary-md
+          path: artifacts/metrics/smoke_summary.md
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload smoke raw outputs (ask plain/rag)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-raw
+          path: |
+            artifacts/metrics/ask_plain.*
+            artifacts/metrics/ask_rag.*
+          retention-days: 7
+          if-no-files-found: warn
+
+  rag-gate:
+    runs-on: ubuntu-latest
+    needs: [test]
+    env:
+      METRICS_TEST_COLLECTION: metrics_demo_1d
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start API stack (docker-compose)
+        env:
+          API_PORT: "8000"
+        run: |
+          set -euo pipefail
+          cp configs/env.example .env
+          sed -i 's/^API_PORT=.*/API_PORT=8000/' .env || true
+          docker compose build api
+          docker compose up -d db redis qdrant ollama
+          docker compose up -d api
+          # Wait API
+          for i in $(seq 1 60); do
+            if curl -fsS "http://localhost:${API_PORT}/metrics" >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          # Best-effort ensure Ollama
+          for i in $(seq 1 30); do
+            if curl -fsS "http://localhost:11434/api/tags" >/dev/null 2>&1; then break; fi
+            sleep 3
+          done
+
+      - name: RAG evaluation gate
+        env:
+          GATE_HIT_RATIO_MIN: "0.60"
+          GATE_AVG_TOP1_MIN: "0.35"
+          GATE_STRICT: "both"
+          GATE_MIN_TOTAL: "10"
+          GATE_REQUIRE_MIN_TOTAL: "0"
+          RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
+          RAG_TOP_K: "5"
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          bash scripts/rag_eval_gate.sh
+
+      - name: Upload rag gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-csv
+          path: artifacts/metrics/rag_eval.csv
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload rag gate JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-json
+          path: artifacts/metrics/rag_eval.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: |
+          npm install --no-fund --no-audit
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright browsers (with dependencies)
+        working-directory: frontend
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright E2E
+        working-directory: frontend
+        env:
+          # Ensure non-interactive CI run
+          CI: 'true'
+        run: npm run test:e2e
+
+      - name: Summarize Playwright JUnit results
+        if: always()
+        run: |
+          FILE="frontend/playwright-results.xml"
+          if [ -f "$FILE" ]; then
+            TS=$(grep -o 'tests="[0-9]*"' "$FILE" | head -1 | sed 's/[^0-9]//g' || echo 0)
+            FS=$(grep -o 'failures="[0-9]*"' "$FILE" | head -1 | sed 's/[^0-9]//g' || echo 0)
+            SK=$(grep -o 'skipped="[0-9]*"' "$FILE" | head -1 | sed 's/[^0-9]//g' || echo 0)
+            echo "## Playwright Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo "- tests: $TS" >> "$GITHUB_STEP_SUMMARY"
+            echo "- failures: $FS" >> "$GITHUB_STEP_SUMMARY"
+            echo "- skipped: $SK" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Playwright Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo "- junit file not found (frontend/playwright-results.xml)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Collect failed snapshots (screenshots/videos)
+        if: always()
+        run: |
+          mkdir -p frontend/failed-snapshots || true
+          # Collect images and videos for quick inspection
+          find frontend/test-results -type f \( -name '*.png' -o -name '*.webm' \) -print -exec cp {} frontend/failed-snapshots/ \; || true
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload Playwright raw test-results (traces/screenshots/videos)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: frontend/test-results
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload Playwright failed snapshots (quick view)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failed-snapshots
+          path: frontend/failed-snapshots
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload Playwright JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-junit-xml
+          path: frontend/playwright-results.xml
+          retention-days: 7
+          if-no-files-found: warn

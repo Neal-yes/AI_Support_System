@@ -1,1 +1,1 @@
-{"response":"未在文档中找到相关信息","sources":[],"meta":{"tenant":"_anon_","request_id":"2711a04e388242e69b048155d538802f","use_rag":true,"collection":"default_collection","top_k":5,"match":false}}
+{"error":"HTTPError","detail":"rag retrieval failed: Unexpected Response: 400 (Bad Request)\nRaw response content:\nb'{\"status\":{\"error\":\"Wrong input: Vector dimension error: expected dim: 1, got 3584\"},\"time\":0.000640958}'","request_id":"04c9b25b14da48e1a59b512818bcd0b6"}

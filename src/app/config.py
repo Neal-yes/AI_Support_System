@@ -32,16 +32,18 @@ class Settings(BaseSettings):
     # Ollama
     OLLAMA_HOST: str = "ollama"
     OLLAMA_PORT: int = 11434
-    OLLAMA_MODEL: str = "qwen2.5:7b"
-    OLLAMA_KEEP_ALIVE: Union[str, int] = "5m"
+    OLLAMA_MODEL: str = "phi3:mini"
+    OLLAMA_KEEP_ALIVE: Union[str, int] = "30m"
+    # Optional dedicated embedding model; default to a fast general embedder. Override via env if needed.
+    OLLAMA_EMBED_MODEL: Optional[str] = "nomic-embed-text"
 
     # Timeouts (seconds)
     GENERATE_TIMEOUT: float = 300.0
     EMBED_TIMEOUT: float = 120.0
 
     # Defaults for search/generation
-    DEFAULT_TOP_K: int = 5
-    DEFAULT_NUM_PREDICT: int = 256
+    DEFAULT_TOP_K: int = 1
+    DEFAULT_NUM_PREDICT: int = 8
 
     # CORS
     CORS_ORIGINS: str = "*"  # 逗号分隔，* 表示全部允许
@@ -55,6 +57,10 @@ class Settings(BaseSettings):
 
     # Multi-tenant
     HEADER_TENANT_KEY: str = "X-Tenant-Id"  # 请求头中租户字段名
+
+    # Logging controls
+    LOG_RESPONSE_BODY_ON_5XX: bool = True  # 仅 5xx 时记录响应体截断
+    LOG_RESPONSE_BODY_SAMPLE_RATE: float = 0.0  # 采样记录响应体（0..1）
 
     # 旧版 pydantic v1 风格的 Config 已由上面的 model_config 取代
 

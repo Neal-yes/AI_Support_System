@@ -1,0 +1,1 @@
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"tenant":"demo","tool_name":"simple","tool_type":"http_get"},"value":[1756344837.367,"7.683480734190592"]},{"metric":{"tenant":"demo","tool_name":"simple","tool_type":"http_post"},"value":[1756344837.367,"1.3964569028731417"]}]}}
