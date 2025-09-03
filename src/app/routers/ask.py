@@ -203,10 +203,30 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
     # embed query (force dedicated embed model to ensure dim match and speed)
     t_emb = time.monotonic()
     emb_model = (getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
-    qvecs = await ollama.embeddings([req.query], model=emb_model)
+    # Soft-fail on embedding errors: return graceful 200 to keep smoke stable even if embed model not present
+    try:
+        qvecs = await ollama.embeddings([req.query], model=emb_model)
+    except Exception as e:
+        EMBED_SECONDS.labels(model=emb_model).observe(max(time.monotonic() - t_emb, 0.0))
+        return {
+            "response": "未在文档中找到相关信息",
+            "sources": [],
+            "meta": {
+                "tenant": tenant,
+                "request_id": request_id,
+                "use_rag": True,
+                "collection": coll,
+                "top_k": top_k,
+                "error": f"embed_failed: {type(e).__name__}: {e}",
+            },
+        }
     EMBED_SECONDS.labels(model=emb_model).observe(max(time.monotonic() - t_emb, 0.0))
     if not qvecs or not qvecs[0]:
-        raise HTTPException(status_code=500, detail="failed to get query embedding")
+        return {
+            "response": "未在文档中找到相关信息",
+            "sources": [],
+            "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "top_k": top_k, "error": "empty_embedding"},
+        }
 
     if not qcli.collection_exists(coll):
         # 返回无命中但不报错，便于前端处理
@@ -216,13 +236,17 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
             "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "matches": 0},
         }
 
-    # Retrieval
+    # Retrieval (soft-fail on errors)
     try:
         t_ret = time.monotonic()
         scored = qcli.search_vectors(coll, query=qvecs[0], top_k=top_k, filters=req.filters)
         RAG_RETRIEVAL_SECONDS.labels(collection=coll).observe(max(time.monotonic() - t_ret, 0.0))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"rag retrieval failed: {e}")
+        return {
+            "response": "未在文档中找到相关信息",
+            "sources": [],
+            "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "top_k": top_k, "error": f"retrieval_failed: {e}"},
+        }
 
     contexts, sources = _prepare_contexts(scored)
     if not contexts:
