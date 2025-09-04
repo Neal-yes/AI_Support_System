@@ -75,6 +75,26 @@ async def embeddings(texts: List[str], model: Optional[str] = None, *, timeout: 
     return vectors
 
 
+async def ensure_model(model: str, *, timeout: Optional[float] = None) -> bool:
+    """Ensure the given model is available by calling Ollama /api/pull (non-stream).
+    Returns True if pull succeeded (200), False otherwise.
+    """
+    url = f"http://{settings.OLLAMA_HOST}:{settings.OLLAMA_PORT}/api/pull"
+    payload = {"model": model, "stream": False}
+    client = _get_client(timeout or 60.0)
+    req_timeout = httpx.Timeout(
+        connect=10.0,
+        read=(timeout or 60.0),
+        write=10.0,
+        pool=10.0,
+    )
+    try:
+        resp = await client.post(url, json=payload, timeout=req_timeout)
+        resp.raise_for_status()
+        return True
+    except Exception:
+        return False
+
 async def generate_stream(prompt: str, model: Optional[str] = None, *, keep_alive: Optional[Union[str, int]] = None, **kwargs) -> AsyncGenerator[str, None]:
     """Stream tokens from Ollama /api/generate (stream=true) and yield plain text chunks."""
     url = f"http://{settings.OLLAMA_HOST}:{settings.OLLAMA_PORT}/api/generate"
