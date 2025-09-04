@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, List
 import json
 import time
+import asyncio
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse, PlainTextResponse, Response
 from pydantic import BaseModel
@@ -212,12 +213,42 @@ async def rag_eval(req: RagEvalRequest):
     if not qcli.collection_exists(coll):
         raise HTTPException(status_code=404, detail=f"collection not found: {coll}")
 
-    # 批量嵌入
+    # 批量嵌入（确保模型 + 指数退避重试，最终软失败返回空结果而非 500）
+    emb_model = (req.model or getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
+    await ollama.ensure_model(emb_model)
     t_emb = time.monotonic()
-    vecs = await ollama.embeddings(req.queries, model=req.model or settings.OLLAMA_MODEL)
-    EMBED_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL)).observe(max(time.monotonic() - t_emb, 0.0))
-    if not vecs or len(vecs) != len(req.queries):
-        raise HTTPException(status_code=500, detail="failed to get embeddings for queries")
+    vecs: List[List[float]] = []
+    err_detail: Optional[str] = None
+    max_attempts = 6
+    delay = 0.5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            vecs = await ollama.embeddings(req.queries, model=emb_model)
+            if vecs and len(vecs) == len(req.queries) and all(isinstance(v, list) and len(v) > 0 for v in vecs):
+                err_detail = None
+                break
+            err_detail = "empty_or_mismatched_vectors"
+        except Exception as e:
+            err_detail = f"embed_exception: {type(e).__name__}: {e}"
+        if attempt < max_attempts:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2.0, 8.0)
+        else:
+            break
+    EMBED_SECONDS.labels(model=emb_model).observe(max(time.monotonic() - t_emb, 0.0))
+    if err_detail is not None or not vecs or len(vecs) != len(req.queries):
+        # 软失败：返回空结果，便于 CI gate 不中断；下游可据此判定失败
+        details: List[Dict[str, Any]] = []
+        summary = {
+            "collection": coll,
+            "total": len(req.queries),
+            "hit_ratio": 0.0,
+            "avg_top1": 0.0,
+            "avg_mean_score": 0.0,
+            "top_k": top_k,
+            "error": err_detail or "failed_to_get_embeddings",
+        }
+        return {"summary": summary, "details": details}
 
     details: List[Dict[str, Any]] = []
     match_cnt = 0

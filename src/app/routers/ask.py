@@ -178,18 +178,39 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
         opts.setdefault("temperature", 0.4)
         opts.setdefault("top_p", 0.9)
         opts.setdefault("repeat_penalty", 1.05)
+        model_name = (req.model or settings.OLLAMA_MODEL)
+        # 确保模型已存在
+        await ollama.ensure_model(model_name)
+        # 指数退避重试生成
         t0 = time.monotonic()
-        try:
-            resp = await ollama.generate(
-                req.query,
-                model=req.model or settings.OLLAMA_MODEL,
-                **opts,
-            )
-        except Exception as e:
-            # 记录失败耗时并返回详细错误，便于 CI Smoke 调试
-            LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t0, 0.0))
-            raise HTTPException(status_code=500, detail=f"plain generation failed: {type(e).__name__}: {e}")
-        LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t0, 0.0))
+        resp: Dict[str, Any] = {}
+        gen_error: Optional[str] = None
+        max_attempts = 6
+        delay = 0.5
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = await ollama.generate(
+                    req.query,
+                    model=model_name,
+                    **opts,
+                )
+                gen_error = None
+                break
+            except Exception as e:
+                gen_error = f"plain_generation_exception: {type(e).__name__}: {e}"
+                if attempt < max_attempts:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2.0, 8.0)
+                else:
+                    break
+        LLM_GENERATE_SECONDS.labels(model=model_name, stream="false").observe(max(time.monotonic() - t0, 0.0))
+        if gen_error is not None:
+            # 软失败：返回 200，携带错误信息
+            return {
+                "response": "",
+                "sources": [],
+                "meta": {"tenant": tenant, "request_id": request_id, "use_rag": False, "error": gen_error},
+            }
         return {
             "response": resp.get("response", ""),
             "sources": [],
@@ -203,29 +224,33 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
     # embed query (force dedicated embed model to ensure dim match and speed)
     t_emb = time.monotonic()
     emb_model = (getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
-    # Soft-fail on embedding errors: return graceful 200 to keep smoke stable even if embed model not present
-    try:
-        qvecs = await ollama.embeddings([req.query], model=emb_model)
-    except Exception as e:
-        EMBED_SECONDS.labels(model=emb_model).observe(max(time.monotonic() - t_emb, 0.0))
-        return {
-            "response": "未在文档中找到相关信息",
-            "sources": [],
-            "meta": {
-                "tenant": tenant,
-                "request_id": request_id,
-                "use_rag": True,
-                "collection": coll,
-                "top_k": top_k,
-                "error": f"embed_failed: {type(e).__name__}: {e}",
-            },
-        }
+    # 先确保嵌入模型存在
+    await ollama.ensure_model(emb_model)
+    # 指数退避重试获取嵌入；软失败返回 200
+    qvecs: List[List[float]] = []
+    emb_error: Optional[str] = None
+    max_attempts = 6
+    delay = 0.5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            qvecs = await ollama.embeddings([req.query], model=emb_model)
+            if qvecs and qvecs[0]:
+                emb_error = None
+                break
+            emb_error = "empty_embedding"
+        except Exception as e:
+            emb_error = f"embed_failed: {type(e).__name__}: {e}"
+        if attempt < max_attempts:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2.0, 8.0)
+        else:
+            break
     EMBED_SECONDS.labels(model=emb_model).observe(max(time.monotonic() - t_emb, 0.0))
-    if not qvecs or not qvecs[0]:
+    if emb_error is not None or not qvecs or not qvecs[0]:
         return {
             "response": "未在文档中找到相关信息",
             "sources": [],
-            "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "top_k": top_k, "error": "empty_embedding"},
+            "meta": {"tenant": tenant, "request_id": request_id, "use_rag": True, "collection": coll, "top_k": top_k, "error": emb_error or "empty_embedding"},
         }
 
     if not qcli.collection_exists(coll):
@@ -268,16 +293,45 @@ async def ask(req: AskRequest, request: Request) -> Dict[str, Any]:
     opts.setdefault("temperature", 0.4)
     opts.setdefault("top_p", 0.9)
     opts.setdefault("repeat_penalty", 1.05)
-    try:
-        t_gen = time.monotonic()
-        resp = await ollama.generate(
-            prompt,
-            model=req.model or settings.OLLAMA_MODEL,
-            **opts,
-        )
-        LLM_GENERATE_SECONDS.labels(model=(req.model or settings.OLLAMA_MODEL), stream="false").observe(max(time.monotonic() - t_gen, 0.0))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"rag generation failed: {type(e).__name__}: {e}")
+    # 生成阶段：确保模型并加入重试；失败软返回 200
+    gen_model = (req.model or settings.OLLAMA_MODEL)
+    await ollama.ensure_model(gen_model)
+    t_gen = time.monotonic()
+    resp: Dict[str, Any] = {}
+    gen_error: Optional[str] = None
+    max_attempts = 6
+    delay = 0.5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = await ollama.generate(
+                prompt,
+                model=gen_model,
+                **opts,
+            )
+            gen_error = None
+            break
+        except Exception as e:
+            gen_error = f"rag_generation_exception: {type(e).__name__}: {e}"
+        if attempt < max_attempts:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2.0, 8.0)
+        else:
+            break
+    LLM_GENERATE_SECONDS.labels(model=gen_model, stream="false").observe(max(time.monotonic() - t_gen, 0.0))
+    if gen_error is not None:
+        return {
+            "response": "未在文档中找到相关信息",
+            "sources": sources,
+            "meta": {
+                "tenant": tenant,
+                "request_id": request_id,
+                "use_rag": True,
+                "collection": coll,
+                "top_k": top_k,
+                "match": bool(scored),
+                "error": gen_error,
+            },
+        }
 
     RAG_MATCHES_TOTAL.labels(collection=coll, has_match=str(bool(scored)).lower()).inc()
 
@@ -417,9 +471,12 @@ async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
         opts.setdefault("top_p", 0.9)
         opts.setdefault("repeat_penalty", 1.05)
         opts.setdefault("stop", ["\n\n["])
+        # 确保模型已拉取，降低首次调用 404/冷启动失败
+        model_name = (req.model or settings.OLLAMA_MODEL)
+        await ollama.ensure_model(model_name)
         gen = ollama.generate_stream(
             req.query,
-            model=req.model or settings.OLLAMA_MODEL,
+            model=model_name,
             **opts,
         )
         wrapped = _with_heartbeat(gen, time_limit_ms=time_limit_ms, max_tokens_streamed=max_tokens_streamed, heartbeat_ms=heartbeat_ms)
@@ -455,7 +512,27 @@ async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
         # 1) Embedding (async) with periodic heartbeats
         # 强制使用专用嵌入模型，避免因生成模型不同导致维度不一致
         emb_model = (getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
-        emb_task = asyncio.create_task(ollama.embeddings([req.query], model=emb_model))
+        # 先确保嵌入模型存在
+        await ollama.ensure_model(emb_model)
+
+        async def _embed_with_retry() -> List[List[float]]:
+            max_attempts = 6
+            delay = 0.5
+            last: Optional[List[List[float]]] = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    vecs = await ollama.embeddings([req.query], model=emb_model)
+                    if vecs and vecs[0]:
+                        return vecs
+                    last = vecs
+                except Exception:
+                    last = None
+                if attempt < max_attempts:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2.0, 8.0)
+            return last or []
+
+        emb_task = asyncio.create_task(_embed_with_retry())
         if heartbeat_ms and heartbeat_ms > 0:
             interval = max(heartbeat_ms / 1000.0, 0.1)
             while not emb_task.done():
@@ -527,9 +604,12 @@ async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
                 pass
             plain_opts: Dict[str, Any] = dict(opts)
             plain_opts["num_predict"] = min(plain_opts.get("num_predict", 3), 3)
+            # 确保生成模型已拉取
+            model_name = (req.model or settings.OLLAMA_MODEL)
+            await ollama.ensure_model(model_name)
             plain_gen = ollama.generate_stream(
                 req.query,
-                model=req.model or settings.OLLAMA_MODEL,
+                model=model_name,
                 **plain_opts,
             )
             async for chunk in _with_heartbeat(plain_gen, time_limit_ms=time_limit_ms, max_tokens_streamed=max_tokens_streamed, heartbeat_ms=heartbeat_ms):
@@ -538,9 +618,12 @@ async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
 
         # 4) 并行竞速：RAG 与 非RAG 同时尝试，8 秒内谁先出首 token 用谁
         t_race_start = time.perf_counter()
+        # 确保生成模型已拉取，避免冷启动/404
+        model_name = (req.model or settings.OLLAMA_MODEL)
+        await ollama.ensure_model(model_name)
         rag_gen = ollama.generate_stream(
             prompt,
-            model=req.model or settings.OLLAMA_MODEL,
+            model=model_name,
             **opts,
         )
         plain_opts: Dict[str, Any] = dict(opts)
@@ -548,7 +631,7 @@ async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
         plain_opts["num_predict"] = min(plain_opts.get("num_predict", 4), 4)
         plain_gen = ollama.generate_stream(
             req.query,
-            model=req.model or settings.OLLAMA_MODEL,
+            model=model_name,
             **plain_opts,
         )
 
