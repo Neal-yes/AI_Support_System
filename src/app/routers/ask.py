@@ -471,16 +471,46 @@ async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
         opts.setdefault("top_p", 0.9)
         opts.setdefault("repeat_penalty", 1.05)
         opts.setdefault("stop", ["\n\n["])
-        # 确保模型已拉取，降低首次调用 404/冷启动失败
-        model_name = (req.model or settings.OLLAMA_MODEL)
-        await ollama.ensure_model(model_name)
-        gen = ollama.generate_stream(
-            req.query,
-            model=model_name,
-            **opts,
-        )
-        wrapped = _with_heartbeat(gen, time_limit_ms=time_limit_ms, max_tokens_streamed=max_tokens_streamed, heartbeat_ms=heartbeat_ms)
-        return StreamingResponse(wrapped, media_type="text/event-stream; charset=utf-8", headers=headers)
+        # 立即开始 SSE：先发送 started，再等待 ensure_model（期间可发心跳），避免超时
+        async def _plain_flow():
+            # flush headers early
+            yield b"data: [started]\n\n"
+            model_name = (req.model or settings.OLLAMA_MODEL)
+            # 等待模型可用，同时发心跳避免 ReadTimeout
+            try:
+                if heartbeat_ms and heartbeat_ms > 0:
+                    ensure_task = asyncio.create_task(ollama.ensure_model(model_name))
+                    interval = max(heartbeat_ms / 1000.0, 0.1)
+                    while not ensure_task.done():
+                        await asyncio.sleep(interval)
+                        if not ensure_task.done():
+                            yield b"data: [heartbeat]\n\n"
+                    # propagate exceptions if any
+                    await ensure_task
+                else:
+                    await ollama.ensure_model(model_name)
+            except Exception as e:
+                # 软失败：报告错误并结束
+                msg = f"[error]: EnsureModelError: {e}"
+                yield ("data: " + msg + "\n\n").encode("utf-8")
+                yield b"data: [done]\n\n"
+                return
+
+            # 模型就绪后开始流式生成，并继续使用心跳包装器
+            gen = ollama.generate_stream(
+                req.query,
+                model=model_name,
+                **opts,
+            )
+            async for chunk in _with_heartbeat(
+                gen,
+                time_limit_ms=time_limit_ms,
+                max_tokens_streamed=max_tokens_streamed,
+                heartbeat_ms=heartbeat_ms,
+            ):
+                yield chunk
+
+        return StreamingResponse(_plain_flow(), media_type="text/event-stream; charset=utf-8", headers=headers)
 
 
     # RAG path (emit started immediately; heartbeat during embed/retrieval; then stream generation)
