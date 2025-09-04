@@ -44,6 +44,45 @@ wait_api_ready() {
   done
 }
 
+# 预热嵌入模型，避免首次请求时模型下载/加载导致 500
+warmup_embed() {
+  local max_attempts=${1:-8}
+  local texts='{"texts":["warmup"]}'
+  local body="$texts"
+  # 若显式指定嵌入模型，附带到 body
+  if [ -n "${RAG_MODEL}" ]; then
+    body=$(jq -n --argjson texts '["warmup"]' --arg model "${RAG_MODEL}" '{texts: $texts, model: $model}')
+  fi
+  echo "[EMBED PREP] 预热嵌入模型（最多 ${max_attempts} 次）"
+  local attempt=1
+  local backoff=1
+  while true; do
+    set +e
+    local code
+    code=$(curl -sS -o /tmp/embed_warmup.json -w "%{http_code}" \
+      -H 'Content-Type: application/json' \
+      -d "$body" \
+      "${API_BASE}/embedding/embed")
+    local rc=$?
+    set -e
+    if [ $rc -eq 0 ] && [ "$code" = "200" ]; then
+      local dim
+      dim=$(jq -r '.dimension // 0' /tmp/embed_warmup.json 2>/dev/null || echo 0)
+      echo "[EMBED PREP] 嵌入模型预热成功（dim=$dim）"
+      break
+    fi
+    echo "[EMBED PREP] 嵌入预热失败: rc=$rc http=$code attempt=$attempt" >&2
+    if [ $attempt -ge $max_attempts ]; then
+      echo "[EMBED PREP] 嵌入预热重试耗尽，继续后续 upsert（upsert 自身也有重试）" >&2
+      sed -n '1,200p' /tmp/embed_warmup.json >&2 || true
+      break
+    fi
+    sleep $backoff
+    attempt=$(( attempt + 1 ))
+    if [ $backoff -lt 10 ]; then backoff=$(( backoff * 2 )); fi
+  done
+}
+
 # Ensure SRC_JSONL exists with fallbacks
 if [ ! -f "$SRC_JSONL" ]; then
   echo "找不到评测源文件: $SRC_JSONL，尝试回退..." >&2
@@ -142,6 +181,9 @@ echo '{}' > "$SUMMARY_JSON"
 
 # 先等待 API/-/ready（带超时），提升稳定性
 wait_api_ready 90
+
+# 预热嵌入模型，减少首次 upsert 出错概率
+warmup_embed 8
 
 while [ $OFFSET -lt $COUNT ]; do
   SIZE=$(( COUNT - OFFSET ))
