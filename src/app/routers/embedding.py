@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -50,9 +51,30 @@ async def upsert(req: UpsertRequest) -> Dict[str, Any]:
     coll = req.collection or settings.QDRANT_COLLECTION
     # 使用专用嵌入模型，除非显式指定
     chosen_model = (req.model or getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL)
-    vectors = await ollama.embeddings(req.texts, model=chosen_model)
-    if not vectors or not vectors[0]:
-        raise HTTPException(status_code=500, detail="failed to get embeddings")
+    # 先确保模型可用，并在冷启动阶段对嵌入调用进行重试以避免瞬时 500
+    max_attempts = 6
+    delay = 0.5
+    last_err: Optional[Exception] = None
+    vectors: List[List[float]] = []
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # best-effort 确保模型拉取完成
+            try:
+                _ = await ollama.ensure_model(chosen_model, timeout=90)
+            except Exception:
+                # ensure_model 失败不致命，继续尝试 embeddings（由下方重试兜底）
+                pass
+            vectors = await ollama.embeddings(req.texts, model=chosen_model)
+            if vectors and vectors[0]:
+                break
+            raise RuntimeError("empty embeddings")
+        except Exception as e:
+            last_err = e
+            if attempt < max_attempts:
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.8, 8.0)
+            else:
+                raise HTTPException(status_code=500, detail=f"embedding failed after retries: {type(e).__name__}: {e}")
     dim = len(vectors[0])
     # ensure collection exists
     qcli.ensure_collection(coll, vector_size=dim)

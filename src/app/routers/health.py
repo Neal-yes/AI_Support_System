@@ -9,6 +9,7 @@ import psycopg
 from fastapi import APIRouter
 
 from src.app.config import settings, ServiceStatus
+from src.app.clients import ollama
 
 router = APIRouter(prefix="", tags=["health"])
 
@@ -113,12 +114,20 @@ async def ready() -> Dict[str, Any]:
         check_ollama(),
         return_exceptions=False,
     )
-    qdrant, ollama = results
-    overall = all([qdrant.healthy, ollama.healthy])
+    qdrant, ollama_status = results
+    # 进行一次轻量 Embeddings 探测，确保模型真正可用
+    try:
+        vecs = await asyncio.wait_for(ollama.embeddings(["ready"], timeout=15), timeout=20)
+        emb_ok = bool(vecs and vecs[0])
+        embed_status = ServiceStatus(healthy=emb_ok)
+    except Exception as e:
+        embed_status = ServiceStatus(healthy=False, detail=str(e))
+    overall = all([qdrant.healthy, ollama_status.healthy, embed_status.healthy])
     return {
         "status": "ok" if overall else "degraded",
         "services": {
             "qdrant": qdrant.model_dump(),
-            "ollama": ollama.model_dump(),
+            "ollama": ollama_status.model_dump(),
+            "ollama_embed": embed_status.model_dump(),
         },
     }

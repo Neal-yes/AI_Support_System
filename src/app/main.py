@@ -46,6 +46,19 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(0.5)
         t_gen = time.perf_counter()
         try:
+            # Ensure models are present (pull if necessary)
+            emb_model = getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL
+            try:
+                ok_emb = await ollama.ensure_model(emb_model, timeout=120)
+                logging.getLogger("startup").info("ensure_model_embed %s: %s", emb_model, ok_emb)
+            except Exception as e:
+                logging.getLogger("startup").warning("ensure_model_embed_failed model=%s error=%s: %s", emb_model, type(e).__name__, e)
+            try:
+                ok_gen = await ollama.ensure_model(settings.OLLAMA_MODEL, timeout=120)
+                logging.getLogger("startup").info("ensure_model_generate %s: %s", settings.OLLAMA_MODEL, ok_gen)
+            except Exception as e:
+                logging.getLogger("startup").warning("ensure_model_generate_failed model=%s error=%s: %s", settings.OLLAMA_MODEL, type(e).__name__, e)
+
             await ollama.generate("warmup", model=settings.OLLAMA_MODEL, timeout=60, num_predict=8)
             dt = (time.perf_counter() - t_gen) * 1000.0
             logger.info("warmup_generate_ok latency_ms=%.2f model=%s", dt, settings.OLLAMA_MODEL)
@@ -55,13 +68,11 @@ async def lifespan(app: FastAPI):
 
         t_emb = time.perf_counter()
         try:
-            emb_model = getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL
             await ollama.embeddings(["warmup"], model=emb_model, timeout=60)
             dt2 = (time.perf_counter() - t_emb) * 1000.0
             logger.info("warmup_embeddings_ok latency_ms=%.2f model=%s", dt2, emb_model)
         except Exception as e:
             dt2 = (time.perf_counter() - t_emb) * 1000.0
-            emb_model = getattr(settings, "OLLAMA_EMBED_MODEL", None) or settings.OLLAMA_MODEL
             logger.warning("warmup_embeddings_failed latency_ms=%.2f model=%s error=%s: %s", dt2, emb_model, type(e).__name__, e)
 
         # 预热 RAG 检索链路（embedding + Qdrant search），非强制

@@ -8,12 +8,17 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch: {}
+  schedule:
+    # Every Monday 02:00 UTC
+    - cron: '0 2 * * MON'
 
 jobs:
   generate-progress:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout (workflow_run)
         if: ${{ github.event_name == 'workflow_run' }}

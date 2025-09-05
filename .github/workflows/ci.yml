@@ -374,6 +374,30 @@ jobs:
             if curl -fsS "http://localhost:11434/api/tags" >/dev/null 2>&1; then break; fi
             sleep 3
           done
+          echo "[CI][sse-test] Determine model tag from .env (OLLAMA_MODEL) or fallback"
+          MODEL_FROM_ENV=$(grep -E '^OLLAMA_MODEL=' .env | head -n1 | cut -d= -f2- || true)
+          PULL_NAME="${MODEL_FROM_ENV:-qwen2.5:7b}"
+          echo "[CI][sse-test] Pre-pull model in Ollama: ${PULL_NAME}"
+          set +e
+          curl -fsS -X POST http://localhost:11434/api/pull \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\": \"${PULL_NAME}\"}" || true
+          echo "[CI][sse-test] Waiting for model tag to appear: ${PULL_NAME}"
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:11434/api/tags | jq -e --arg m "${PULL_NAME}" '.models[].model == $m' >/dev/null 2>&1; then
+              echo "[CI][sse-test] Model available: ${PULL_NAME}"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          set -e
+          if [ "$ok" != "1" ]; then
+            echo "[CI][sse-test] Model ${PULL_NAME} not ready in time; continuing, SSE may be slower to first token" >&2
+          fi
+
+          echo "[CI][sse-test] API warmup via /api/v1/debug/warmup"
+          curl -fsS "http://localhost:${API_PORT}/api/v1/debug/warmup" || true
 
       - name: Run SSE test only
         env:
@@ -524,6 +548,13 @@ jobs:
             if curl -fsS "http://localhost:11434/api/tags" >/dev/null 2>&1; then break; fi
             sleep 3
           done
+
+      - name: Prepare RAG demo embeddings
+        env:
+          RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
+        run: |
+          echo "[CI] Preparing demo embeddings for RAG (rag-gate)"
+          bash scripts/prepare_demo_embeddings.sh
 
       - name: RAG evaluation gate
         env:
