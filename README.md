@@ -683,6 +683,31 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
     curl -s http://localhost:8000/embedding/upsert -H 'Content-Type: application/json' \
       -d '{"texts":["第一条文档","第二条文档"],"collection":"demo"}' | jq .
     ```
+
+  - UUID 覆盖 upsert 与 422 排错
+    - 如需使用字符串 UUID 覆盖已有点位，请传入 `ids` 为字符串数组（后端已支持 `int` 与 `str` 两种 id 类型）：
+      ```bash
+      curl -s http://localhost:8000/embedding/upsert -H 'Content-Type: application/json' \
+        -d '{
+          "collection":"demo",
+          "ids":["09d19e8f-4be6-43ce-880e-ee8266bac0ee"],
+          "texts":["可通过脚本导入 demo 数据，也可从 jsonl 导入 FAQ"],
+          "payloads":[{"text":"可通过脚本导入 demo 数据，也可从 jsonl 导入 FAQ"}]
+        }' | jq .
+      ```
+    - 若出现 422（`ids[0]` 需要整数），说明后端版本较旧或类型未更新。请确认 `src/app/routers/embedding.py` 中：
+      - `UpsertRequest.ids: Optional[List[Union[int, str]]] = None`
+      - 修改后重启 API：`docker compose up -d --build api`。
+    - 覆盖完成后，可用以下命令复查 `payload.text` 与 RAG 预检：
+      ```bash
+      # Search 复查
+      curl -s http://localhost:8000/embedding/search -H 'Content-Type: application/json' \
+        -d '{"query":"FAQ","collection":"demo","top_k":3}' | jq .
+
+      # RAG 预检复查
+      curl -s http://localhost:8000/api/v1/rag/preflight -H 'Content-Type: application/json' \
+        -d '{"query":"系统如何导入FAQ？","collection":"demo","top_k":3}' | jq .
+      ```
 - 向量检索：`POST /embedding/search`
   - 请求示例：
     ```bash
