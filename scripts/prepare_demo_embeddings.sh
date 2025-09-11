@@ -67,8 +67,12 @@ warmup_embed() {
     set -e
     if [ $rc -eq 0 ] && [ "$code" = "200" ]; then
       local dim
-      dim=$(jq -r '.dimension // 0' /tmp/embed_warmup.json 2>/dev/null || echo 0)
-      echo "[EMBED PREP] 嵌入模型预热成功（dim=$dim）"
+      # safely extract dimension; default to 0 on any failure/empty
+      dim=$( (jq -r '.dimension // 0' /tmp/embed_warmup.json 2>/dev/null) || true )
+      if [ -z "${dim:-}" ] || ! [[ "$dim" =~ ^[0-9]+$ ]]; then
+        dim=0
+      fi
+      echo "[EMBED PREP] 嵌入模型预热成功（dim=${dim}）"
       break
     fi
     echo "[EMBED PREP] 嵌入预热失败: rc=$rc http=$code attempt=$attempt" >&2
