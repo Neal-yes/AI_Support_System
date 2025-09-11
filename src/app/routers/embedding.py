@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -20,7 +20,7 @@ class EmbedRequest(BaseModel):
 class UpsertRequest(BaseModel):
     texts: List[str]
     payloads: Optional[List[Dict[str, Any]]] = None
-    ids: Optional[List[int]] = None
+    ids: Optional[List[Union[int, str]]] = None
     collection: Optional[str] = None
     model: Optional[str] = None
 
@@ -46,6 +46,20 @@ async def embed(req: EmbedRequest) -> Dict[str, Any]:
 
 @router.post("/upsert")
 async def upsert(req: UpsertRequest) -> Dict[str, Any]:
+    """
+    向量入库（支持按自定义 ID 覆盖）
+
+    - ids 支持 `int` 或 `str`（例如字符串 UUID）。
+    - 若不提供 ids，服务会按 Qdrant 默认策略生成 ID。
+    - 若 422 报错指向 `ids[0]` 需要整数，说明后端仍是旧类型定义，请确认：
+      `UpsertRequest.ids: Optional[List[Union[int, str]]] = None` 并重启 API。
+
+    请求体字段：
+    - texts: List[str] 必填
+    - payloads: List[Dict] 可选；未提供时会自动生成 `{ "text": 原文 }`
+    - ids: List[int|str] 可选；传入可覆盖既有点位
+    - collection/model: 可选
+    """
     if not req.texts:
         raise HTTPException(status_code=400, detail="texts is required")
     coll = req.collection or settings.QDRANT_COLLECTION
