@@ -273,6 +273,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, onBeforeUnmount, watch } from 'vue'
 import axios from 'axios'
+import api from '../utils/http'
 import { isValidHttpUrl } from '../utils/obs'
 
 const tenant = ref('default')
@@ -501,6 +502,7 @@ const ENV_PROM_BASE = (import.meta as any).env?.VITE_OBS_PROM_BASE || ''
 const ENV_PROM_QUERY_TPL = (import.meta as any).env?.VITE_OBS_PROM_QUERY_TPL || ''
 const ENV_LOGS_BASE = (import.meta as any).env?.VITE_OBS_LOGS_BASE || ''
 const ENV_LOGS_QUERY_TPL = (import.meta as any).env?.VITE_OBS_LOGS_QUERY_TPL || ''
+const ENV_API_BASE = (import.meta as any).env?.VITE_API_BASE || ''
 
 // Template preview/test controls
 const testKey = ref('')
@@ -616,7 +618,8 @@ const curlPreview = computed(() => {
   try {
     const data = requestPreview.value
     if (data.startsWith('JSON 解析错误')) return data
-    return `curl -sS -X POST -H 'Content-Type: application/json' --data '${data.replace(/'/g, "'\\''")}' ${window.location.origin}/api/v1/tools/invoke`
+    const base = (ENV_API_BASE || window.location.origin).replace(/\/$/, '')
+    return `curl -sS -X POST -H 'Content-Type: application/json' --data '${data.replace(/'/g, "'\\''")}' ${base}/api/v1/tools/invoke`
   } catch (e:any) {
     return ''
   }
@@ -631,7 +634,7 @@ async function invoke() {
     const params = JSON.parse(paramsStr.value || '{}')
     const options = JSON.parse(optionsStr.value || '{}')
     const start = performance.now()
-    const resp = await axios.post('/api/v1/tools/invoke', {
+    const resp = await api.post('/api/v1/tools/invoke', {
       tenant_id: tenant.value,
       tool_type: toolType.value,
       tool_name: toolName.value,
@@ -821,7 +824,7 @@ async function previewOptions() {
   try {
     const params = JSON.parse(paramsStr.value || '{}')
     const options = JSON.parse(optionsStr.value || '{}')
-    const resp = await axios.post('/api/v1/tools/preview', {
+    const resp = await api.post('/api/v1/tools/preview', {
       tenant_id: tenant.value,
       tool_type: toolType.value,
       tool_name: toolName.value,
