@@ -708,6 +708,49 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
       curl -s http://localhost:8000/api/v1/rag/preflight -H 'Content-Type: application/json' \
         -d '{"query":"系统如何导入FAQ？","collection":"demo","top_k":3}' | jq .
       ```
+
+  - 批量 re-upsert 与排错
+    - 使用 Python 脚本（推荐，支持 UUID 与自动补齐 payload.text）：
+      ```bash
+      # 建议在虚拟环境中执行（PEP 668 环境）
+      python3 -m venv .venv
+      source .venv/bin/activate
+      python -m pip install -r requirements.txt
+
+      # 批量将 JSONL 写入向量库（需包含 text 字段，或按你的结构转换生成 text）
+      python scripts/batch_reupsert.py \
+        --input demo.jsonl \
+        --collection demo_768 \
+        --base-url http://127.0.0.1:8000 \
+        --batch-size 64
+      ```
+      - 输入 JSONL 每行形如：
+        ```json
+        {"id":"可选-整型或UUID","text":"一行文本","payload":{"text":"一行文本","tag":"faq"}}
+        ```
+        - 若未提供 `payload`，脚本会自动补 `{ "text": 原文 }`。
+        - 若未提供 `id`，由后端/Qdrant 自动生成。
+      - 常见错误：
+        - `ModuleNotFoundError: No module named 'httpx'`：请先创建虚拟环境并安装 `requirements.txt`。
+        - `line N missing non-empty 'text'`：你的 JSONL 行无 `text` 字段或为空；请先用 jq/脚本从 `question/query/prompt` 等字段映射生成 `text`。
+          - 示例转换（若原文件含 `question` 字段）：
+            ```bash
+            jq -c '{id: .id, text: (.text // .question // .query // .prompt), payload: (.payload // (if (.text // .question // .query // .prompt) then {text:(.text // .question // .query // .prompt)} else null end))} | select(.text != null and (.text|tostring|length) > 0)'
+            ```
+
+    - 使用 Shell 脚本（便捷初始化 Demo 集合，内置回退与预热）：
+      ```bash
+      # 变量：API_BASE / RAG_COLLECTION / RAG_MODEL / SRC_JSONL / BATCH_SIZE / MAX_DOCS / OUT_DIR
+      API_BASE=http://127.0.0.1:8000 RAG_COLLECTION=demo_768 bash scripts/prepare_demo_embeddings.sh
+      ```
+      - 行为说明：
+        - 等待 `/-/ready` 与嵌入模型预热（避免冷启动 500）。
+        - 优先从 `SRC_JSONL` 提取 `text`；若失败则回退到仓库自带样例；仍失败时使用内置小语料以初始化集合。
+        - 结果写入 `artifacts/metrics/embedding_upsert.json`。
+      - 常见错误：
+        - `jq 未安装`：请先安装 jq。
+        - `预热阶段 dim 未解析`：脚本已加固为默认 0，不影响继续执行。
+
 - 向量检索：`POST /embedding/search`
   - 请求示例：
     ```bash
