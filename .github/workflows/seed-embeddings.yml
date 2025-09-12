@@ -22,6 +22,19 @@ jobs:
         run: |
           mkdir -p artifacts/metrics
 
+      - name: Prepare .env for Compose
+        run: |
+          set -euo pipefail
+          cat > .env <<'EOF'
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=ai_support
+          API_PORT=8000
+          QDRANT_PORT=6333
+          REDIS_PORT=6379
+          OLLAMA_PORT=11434
+          EOF
+
       - name: Set up Docker Compose
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
