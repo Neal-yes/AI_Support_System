@@ -412,7 +412,7 @@ jobs:
         env:
           # 收紧参数以稳定触发限流：1 rps 限额 + 16 并发突发
           RATE_LIMIT: "1"
-          CONCURRENCY: "24"
+          CONCURRENCY: "20"
           API_BASE: http://localhost:8000
           TIMEOUT_S: "4"
         run: |
