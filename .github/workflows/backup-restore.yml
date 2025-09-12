@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           url="${API_BASE}/-/ready"
           echo "Waiting for $url ..."
-          for i in $(seq 1 90); do
+          for i in $(seq 1 150); do
             code=$(curl -sS -o /tmp/ready.json -w "%{http_code}" "$url" || true)
             if [ "$code" = "200" ] && jq -e '.status == "ok" or .status == "degraded"' /tmp/ready.json >/dev/null 2>&1; then
               echo "API ready ($code)"; break
@@ -82,7 +82,8 @@ jobs:
           summary="${OUT_DIR}/embedding_upsert.json"
           total=$(jq -r '.total // 0' "$summary")
           src=$(jq -r '.src // ""' "$summary")
-          coll=$(jq -r '.collection // "${RAG_COLLECTION}"' "$summary")
+          coll=$(jq -r '.collection // empty' "$summary")
+          if [ -z "$coll" ]; then coll="${RAG_COLLECTION}"; fi
           echo "total=$total" >> $GITHUB_OUTPUT
           echo "src=$src" >> $GITHUB_OUTPUT
           echo "coll=$coll" >> $GITHUB_OUTPUT
@@ -119,6 +120,13 @@ jobs:
         id: t1
         run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
+      - name: Warmup embedding model
+        run: |
+          set -euo pipefail
+          body='{"texts":["warmup"],"payloads":[{}],"collection":"'"${{ steps.seed.outputs.coll }}"'"}'
+          # best-effort warmup, ignore non-200 to not fail pipeline here
+          curl -sS -o /tmp/warmup.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$body" "${API_BASE}/embedding/upsert" || true
+
       - name: Restore from backup
         run: |
           set -euxo pipefail
@@ -127,7 +135,20 @@ jobs:
           export OUT_DIR="${OUT_DIR}"
           export SRC_DUMP="${OUT_DIR}/qdrant_${{ steps.seed.outputs.coll }}_dump.json"
           export BATCH_SIZE="${BATCH_SIZE}"
-          bash scripts/restore_qdrant_collection.sh
+          # retry up to 3 times in case of transient model init/network issues
+          n=0
+          until [ "$n" -ge 3 ]; do
+            if bash scripts/restore_qdrant_collection.sh; then
+              break
+            fi
+            n=$((n+1))
+            echo "[RESTORE] retry $n/3 after failure..." >&2
+            sleep 5
+          done
+          if [ "$n" -ge 3 ]; then
+            echo "[RESTORE] failed after retries" >&2
+            exit 1
+          fi
 
       - name: Verify restored count via scroll
         id: rv
