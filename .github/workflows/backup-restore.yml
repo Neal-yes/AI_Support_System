@@ -1,0 +1,176 @@
+name: Backup & Restore Qdrant
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  backup-restore:
+    name: backup-restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      API_BASE: http://localhost:8000
+      QDRANT_HTTP: http://localhost:6333
+      OUT_DIR: artifacts/metrics
+      RAG_COLLECTION: default_collection
+      BATCH_SIZE: "64"
+      MAX_DOCS: "500"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure artifacts directory exists
+        run: |
+          mkdir -p ${OUT_DIR}
+
+      - name: Set up Docker Compose
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: v2.27.1
+
+      - name: Launch minimal stack (api + qdrant + ollama + db)
+        run: |
+          set -euxo pipefail
+          docker compose pull || true
+          docker compose up -d db qdrant ollama api
+          docker compose ps
+
+      - name: Wait /-/ready
+        run: |
+          set -euo pipefail
+          url="${API_BASE}/-/ready"
+          echo "Waiting for $url ..."
+          for i in $(seq 1 90); do
+            code=$(curl -sS -o /tmp/ready.json -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ] && jq -e '.status == "ok" or .status == "degraded"' /tmp/ready.json >/dev/null 2>&1; then
+              echo "API ready ($code)"; break
+            fi
+            sleep 2
+          done
+
+      - name: Seed demo embeddings
+        run: |
+          set -euxo pipefail
+          export API_BASE="${API_BASE}"
+          export OUT_DIR="${OUT_DIR}"
+          export MAX_DOCS="${MAX_DOCS}"
+          bash scripts/prepare_demo_embeddings.sh
+
+      - name: Capture seed stats
+        id: seed
+        run: |
+          set -euo pipefail
+          summary="${OUT_DIR}/embedding_upsert.json"
+          total=$(jq -r '.total // 0' "$summary")
+          src=$(jq -r '.src // ""' "$summary")
+          coll=$(jq -r '.collection // "${RAG_COLLECTION}"' "$summary")
+          echo "total=$total" >> $GITHUB_OUTPUT
+          echo "src=$src" >> $GITHUB_OUTPUT
+          echo "coll=$coll" >> $GITHUB_OUTPUT
+
+      - name: Backup start timestamp
+        id: t0
+        run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Backup Qdrant collection
+        run: |
+          set -euxo pipefail
+          export QDRANT_HTTP="${QDRANT_HTTP}"
+          export RAG_COLLECTION="${{ steps.seed.outputs.coll }}"
+          export OUT_DIR="${OUT_DIR}"
+          bash scripts/backup_qdrant_collection.sh
+
+      - name: Backup stats
+        id: bk
+        run: |
+          set -euo pipefail
+          dump="${OUT_DIR}/qdrant_${{ steps.seed.outputs.coll }}_dump.json"
+          if [ ! -f "$dump" ]; then echo "missing dump: $dump" >&2; exit 1; fi
+          bk_total=$(jq 'length' "$dump")
+          echo "bk_total=$bk_total" >> $GITHUB_OUTPUT
+
+      - name: Drop collection
+        run: |
+          set -euxo pipefail
+          curl -fsS -X DELETE "${QDRANT_HTTP}/collections/${{ steps.seed.outputs.coll }}" || true
+          # verify deleted by listing collections
+          curl -fsS "${QDRANT_HTTP}/collections" | jq -e '.result.collections | map(.name) | index("${{ steps.seed.outputs.coll }}") | not' >/dev/null
+
+      - name: Restore start timestamp
+        id: t1
+        run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Restore from backup
+        run: |
+          set -euxo pipefail
+          export API_BASE="${API_BASE}"
+          export RAG_COLLECTION="${{ steps.seed.outputs.coll }}"
+          export OUT_DIR="${OUT_DIR}"
+          export SRC_DUMP="${OUT_DIR}/qdrant_${{ steps.seed.outputs.coll }}_dump.json"
+          export BATCH_SIZE="${BATCH_SIZE}"
+          bash scripts/restore_qdrant_collection.sh
+
+      - name: Verify restored count via scroll
+        id: rv
+        run: |
+          set -euo pipefail
+          # count points by paging
+          coll="${{ steps.seed.outputs.coll }}"
+          next="null"
+          total=0
+          while :; do
+            body=$(jq -n --argjson lim 512 --argjson next "$next" '{limit:$lim, with_payload:false, with_vectors:false} + (if $next==null then {} else {offset:$next} end)')
+            resp=$(curl -sS -X POST -H 'Content-Type: application/json' -d "$body" "${QDRANT_HTTP}/collections/${coll}/points/scroll")
+            status=$(echo "$resp" | jq -r '.status')
+            if [ "$status" != "ok" ]; then echo "scroll failed: $resp" >&2; exit 1; fi
+            cnt=$(echo "$resp" | jq '.result.points | length')
+            total=$(( total + cnt ))
+            next=$(echo "$resp" | jq -c '.result.next_page_offset')
+            has_next=$(echo "$resp" | jq '.result.next_page_offset != null')
+            if [ "$has_next" != "true" ]; then break; fi
+          done
+          echo "restored_total=$total" >> $GITHUB_OUTPUT
+
+      - name: Compute durations and report
+        run: |
+          set -euo pipefail
+          t0=${{ steps.t0.outputs.ts }}
+          t1=${{ steps.t1.outputs.ts }}
+          t2=$(date +%s)
+          rto=$(( t2 - t1 ))
+          bkt=$(( t1 - t0 ))
+          echo "Backup duration (s): $bkt"
+          echo "Restore duration (s): $rto"
+          {
+            echo "# Backup & Restore Summary"
+            echo
+            echo "- collection: ${{ steps.seed.outputs.coll }}"
+            echo "- seed_total: ${{ steps.seed.outputs.total }}"
+            echo "- backup_total: ${{ steps.bk.outputs.bk_total }}"
+            echo "- restored_total: ${{ steps.rv.outputs.restored_total }}"
+            echo "- backup_duration_seconds: $bkt"
+            echo "- restore_duration_seconds (RTO): $rto"
+            echo "- src: ${{ steps.seed.outputs.src }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # hard assert equality
+          test "${{ steps.bk.outputs.bk_total }}" = "${{ steps.rv.outputs.restored_total }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-restore-${{ github.run_id }}-1
+          path: |
+            ${OUT_DIR}/embedding_upsert.json
+            ${OUT_DIR}/qdrant_${{ steps.seed.outputs.coll }}_dump.json
+
+      - name: Teardown
+        if: always()
+        run: |
+          set -euxo pipefail
+          docker compose down -v || true
