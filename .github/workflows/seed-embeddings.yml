@@ -1,0 +1,95 @@
+name: Seed Embeddings
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  seed-emb:
+    name: seed-embeddings
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure artifacts directory exists
+        run: |
+          mkdir -p artifacts/metrics
+
+      - name: Set up Docker Compose
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: v2.27.1
+
+      - name: Launch minimal stack (api + qdrant + ollama + db)
+        run: |
+          set -euxo pipefail
+          docker compose ps || true
+          # Pull images used by the stack (best-effort)
+          docker compose pull || true
+          # Launch services needed for embedding upsert
+          docker compose up -d db qdrant ollama api
+          docker compose ps
+
+      - name: Wait /-/ready
+        run: |
+          set -euo pipefail
+          url="http://localhost:8000/-/ready"
+          echo "Waiting for $url ..."
+          for i in $(seq 1 60); do
+            code=$(curl -sS -o /tmp/ready.json -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ] && jq -e '.status == "ok" or .status == "degraded"' /tmp/ready.json >/dev/null 2>&1; then
+              echo "API ready ($code)"; break
+            fi
+            sleep 2
+          done
+
+      - name: Seed demo embeddings
+        env:
+          API_BASE: http://localhost:8000
+          OUT_DIR: artifacts/metrics
+          MAX_DOCS: "500"
+        run: |
+          set -euxo pipefail
+          bash scripts/prepare_demo_embeddings.sh
+          echo "Embedding seed finished"
+
+      - name: Assert embedding summary and report
+        run: |
+          set -euo pipefail
+          summary="artifacts/metrics/embedding_upsert.json"
+          if [ ! -f "$summary" ]; then
+            echo "Missing $summary" >&2; exit 1
+          fi
+          total=$(jq -r '.total // 0' "$summary")
+          src=$(jq -r '.src // ""' "$summary")
+          coll=$(jq -r '.collection // ""' "$summary")
+          echo "Embedding seed total=$total src=$src collection=${coll:-<default>}"
+          awk -v t="$total" 'BEGIN{ if (t+0 <= 0) { print "No embeddings upserted" > "/dev/stderr"; exit 1 } }'
+          {
+            echo "# Embedding Seed Summary"
+            echo
+            echo "- total: $total"
+            echo "- src: $src"
+            echo "- collection: ${coll:-<default>}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: seed-embeddings-${{ github.run_id }}-1
+          path: |
+            artifacts/metrics/embedding_upsert.json
+
+      - name: Teardown
+        if: always()
+        run: |
+          set -euxo pipefail
+          docker compose ps || true
+          docker compose down -v || true
