@@ -233,9 +233,19 @@ jobs:
           SRC_JSONL: demo_faq.jsonl
           BATCH_SIZE: "64"
           MAX_DOCS: "500"
-          RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
+          # 重要：不要把生成模型（LLM）传给嵌入脚本，否则会出现向量维度不匹配。
+          # 不设置 RAG_MODEL，让后端使用其默认的嵌入模型（与集合 schema 一致）。
           bash "$GITHUB_WORKSPACE/scripts/prepare_demo_embeddings.sh"
+
+      - name: Log RAG preflight (non-blocking)
+        continue-on-error: true
+        run: |
+          set +e
+          echo "RAG preflight: logging backend defaults"
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"query":"ping","use_rag":true,"options":{"num_predict":1}}' \
+            http://localhost:8000/api/v1/rag/preflight | tee artifacts/metrics/rag_preflight.json || true
 
       - name: Warm up ask API (non-blocking)
         run: |
@@ -371,6 +381,52 @@ jobs:
           echo "Printing metrics probe files if present:" 
           for f in artifacts/metrics/metrics_*_probe.txt; do
             [ -f "$f" ] && echo "--- $f ---" && sed -n '1,120p' "$f"; done || true
+
+      - name: Assert basic metrics thresholds (smoke gate)
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/metrics
+          echo "Fetching API /metrics snapshot"
+          curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_probe.prom
+          echo "Running simple assertions on metrics"
+          # 1) ensure /api/v1/ask has at least one 200
+          if ! grep -q 'http_requests_total{.*path="/api/v1/ask".*,status="200"} ' artifacts/metrics/metrics_probe.prom; then
+            echo "Missing http_requests_total for /api/v1/ask status=200" >&2
+            exit 1
+          fi
+          # 2) ensure tools_requests_total exists (tools gateway exercised)
+          if ! grep -q '^tools_requests_total' artifacts/metrics/metrics_probe.prom; then
+            echo "Missing tools_requests_total metric; tools gateway may be broken" >&2
+            exit 1
+          fi
+          # 3) ensure LLM generate metric present
+          if ! grep -q '^llm_generate_duration_seconds_count' artifacts/metrics/metrics_probe.prom; then
+            echo "Missing llm_generate_duration_seconds_count; LLM path may not be exercised" >&2
+            exit 1
+          fi
+          echo "Basic metrics assertions passed"
+
+      - name: Rate-limit burst (trigger) and assert
+        run: |
+          set -euo pipefail
+          echo "Running rate-limit burst script to trigger tools rate limiting"
+          bash "$GITHUB_WORKSPACE/scripts/tools_rate_limit_burst.sh"
+          echo "Fetching /metrics after burst"
+          curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_after_burst.prom
+          echo "Asserting tools_rate_limited_total increased beyond tiny baseline"
+          # Sum all values for tools_rate_limited_total and ensure > 1e-6 (to avoid 1e-12 placeholders)
+          total=$(awk '/^tools_rate_limited_total\{/ {s+=$NF} END{printf("%.9f", s+0)}' artifacts/metrics/metrics_after_burst.prom)
+          echo "tools_rate_limited_total sum=[$total]"
+          awk -v t="$total" 'BEGIN{ if (t+0 <= 0.000001) { exit 1 } }' || { echo "tools_rate_limited_total did not increase as expected" >&2; exit 1; }
+
+      - name: Circuit breaker probe (non-blocking)
+        continue-on-error: true
+        run: |
+          set +e
+          echo "Running circuit breaker probe (non-blocking)"
+          bash "$GITHUB_WORKSPACE/scripts/tools_circuit_breaker_probe.sh" || true
+          echo "Fetching /metrics after circuit probe"
+          curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_after_circuit.prom || true
 
       - name: Publish Job Summary (Smoke & RAG Gate)
         if: always()
