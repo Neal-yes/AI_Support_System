@@ -77,15 +77,26 @@ while [ $OFFSET -lt $COUNT ]; do
       '{texts:$texts, payloads:$payloads, collection:$coll}')
   fi
 
-  set +e
-  HC=$(curl -sS --connect-timeout 2 --max-time 10 -o /tmp/restore_upsert.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/embedding/upsert")
-  RC=$?
-  set -e
-  if [ $RC -ne 0 ] || [ "$HC" != "200" ]; then
-    echo "[RESTORE] upsert 失败: rc=$RC http=$HC offset=$OFFSET size=$SIZE" >&2
+  # 每批最多重试3次，指数退避
+  ATT=1
+  while :; do
+    set +e
+    HC=$(curl -sS --connect-timeout 2 --max-time 15 -o /tmp/restore_upsert.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/embedding/upsert")
+    RC=$?
+    set -e
+    if [ $RC -eq 0 ] && [ "$HC" = "200" ]; then
+      break
+    fi
+    echo "[RESTORE] upsert 失败: rc=$RC http=$HC offset=$OFFSET size=$SIZE attempt=$ATT" >&2
     sed -n '1,120p' /tmp/restore_upsert.json >&2 || true
-    exit 1
-  fi
+    if [ $ATT -ge 3 ]; then
+      echo "[RESTORE] upsert 多次重试仍失败，终止" >&2
+      exit 1
+    fi
+    SLEEP=$(( ATT * 2 ))
+    sleep $SLEEP
+    ATT=$(( ATT + 1 ))
+  done
   CNT=$(jq -r '.count // 0' /tmp/restore_upsert.json)
   TOTAL=$(( TOTAL + CNT ))
   echo "[RESTORE] 本批 $CNT 条，累计 $TOTAL"
