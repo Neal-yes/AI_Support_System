@@ -123,7 +123,8 @@ jobs:
       - name: Warmup embedding model
         run: |
           set -euo pipefail
-          body='{"texts":["warmup"],"payloads":[{}],"collection":"'"${{ steps.seed.outputs.coll }}"'"}'
+          # 注意：预热写入临时集合，避免污染目标集合计数
+          body='{"texts":["warmup"],"payloads":[{}],"collection":"'"${{ steps.seed.outputs.coll }}__warmup"'"}'
           # best-effort warmup, ignore non-200 to not fail pipeline here
           curl -sS -o /tmp/warmup.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$body" "${API_BASE}/embedding/upsert" || true
 
