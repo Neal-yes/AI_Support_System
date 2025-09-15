@@ -65,6 +65,33 @@ docker compose down
 - configs/env.example: 环境变量模板
 - requirements.txt: Python 依赖
 
+## 备份与恢复演练（自动化）
+
+- 文档指南（Playbook）：`docs/backup_restore_playbook.md`
+- 工作流：Backup & Restore Qdrant（GitHub Actions）
+  - 链接：https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml
+  - 触发方式：
+    - 手动触发：在工作流页面点击 `Run workflow`
+    - 定时触发：每日 03:00 Asia/Shanghai（19:00 UTC）
+  - 工件保留期：14 天
+  - 校验：内置“Validate artifacts”步骤会断言工件内容并把结果写入 Job Summary
+
+### 下载工件（示例）
+
+```bash
+# 使用 gh CLI 下载最近一次运行的工件
+gh run list --workflow=backup-restore.yml -L 1 --json databaseId,url
+# 假设运行 ID 为 17724192239，工件名形如 backup-restore-<run_id>-1
+gh run download 17724192239 -R Neal-yes/AI_Support_System \
+  -n backup-restore-17724192239-1 -D download_artifacts/17724192239
+
+# 本地验证（可选，工作流内已验证）
+python3 scripts/validate_backup_artifacts.py \
+  --emb download_artifacts/17724192239/artifacts/metrics/embedding_upsert.json \
+  --dump download_artifacts/17724192239/artifacts/metrics/qdrant_default_collection_dump.json \
+  --expect-total 5 --expect-src demo.jsonl --expect-collection default_collection
+```
+
 ## 开发提示
 - 默认映射本地 `src/` 到容器内 `/app/src`，支持热重载（--reload）。
 
