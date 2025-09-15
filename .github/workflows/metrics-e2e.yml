@@ -98,7 +98,13 @@ jobs:
       - name: Set model name
         run: |
           # Allow override via workflow env or inputs; default to a tiny model for CI reliability
-          echo "MODEL_SMALL=${MODEL_SMALL:-qwen2:0.5b}" >> "$GITHUB_ENV"
+          MODEL_VAL="${MODEL_SMALL:-qwen2:0.5b}"
+          echo "MODEL_SMALL=${MODEL_VAL}" >> "$GITHUB_ENV"
+          {
+            echo "## CI Model Selection";
+            echo;
+            echo "- MODEL_SMALL: ${MODEL_VAL}";
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Start stack (api, prometheus, grafana, redis, qdrant, alertmanager, ollama)
         run: |
@@ -161,8 +167,19 @@ jobs:
             curl -fsS -b artifacts/metrics/grafana_cookies.txt \
               http://localhost:3000/api/alertmanager/grafana/api/v2/alerts \
               -o artifacts/metrics/grafana_active_alerts.json || true
+            {
+              echo "## Grafana Fetch";
+              echo;
+              echo "- Status: Performed login and fetch using provided secrets";
+              echo "- Outputs: grafana_alert_rules.json (if authorized), grafana_active_alerts.json (if authorized)";
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "GRAFANA_USER/GRAFANA_PASS not set in Secrets, skip Grafana fetch."
+            {
+              echo "## Grafana Fetch";
+              echo;
+              echo "- Status: Skipped (secrets not configured)";
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Export Grafana dashboard JSON
@@ -474,6 +491,25 @@ jobs:
           name: metrics-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/metrics
           if-no-files-found: warn
+
+      - name: Consolidated CI Summary
+        if: always()
+        env:
+          MODEL_SMALL: ${{ env.MODEL_SMALL }}
+        run: |
+          set -euo pipefail
+          MODEL_VAL="${MODEL_SMALL:-qwen2:0.5b}"
+          if [ -f artifacts/metrics/grafana_cookies.txt ]; then
+            GF_STATUS="Performed login and fetch (cookie present)"
+          else
+            GF_STATUS="Skipped (no cookie; secrets likely missing)"
+          fi
+          {
+            echo "# Consolidated CI Summary";
+            echo;
+            echo "- MODEL_SMALL: ${MODEL_VAL}";
+            echo "- Grafana Fetch: ${GF_STATUS}";
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump docker logs on failure or cancel
         if: failure() || cancelled()
