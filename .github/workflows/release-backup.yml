@@ -1,0 +1,150 @@
+name: Release Backup Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Optional: backup-restore run_id to release (defaults to latest successful)"
+        required: false
+        type: string
+      tag:
+        description: "Optional: tag name for release (defaults to auto-generated)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release-backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target backup-restore run
+        id: resolve_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const core = require('@actions/core');
+            const runInput = core.getInput('run_id');
+
+            // Helper: find workflow by file path
+            async function getWorkflowByPath(path) {
+              const { data } = await github.rest.actions.listRepoWorkflows({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+              });
+              const wf = data.workflows.find(w => w.path === path);
+              if (!wf) throw new Error(`Workflow not found by path: ${path}`);
+              return wf;
+            }
+
+            let runId = runInput && runInput.trim().length ? parseInt(runInput.trim(), 10) : 0;
+            if (!runId) {
+              const wf = await getWorkflowByPath('.github/workflows/backup-restore.yml');
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: wf.id,
+                status: 'success',
+                per_page: 1,
+              });
+              if (!data.workflow_runs || !data.workflow_runs.length) {
+                throw new Error('No successful backup-restore runs found');
+              }
+              runId = data.workflow_runs[0].id;
+            }
+
+            core.setOutput('run_id', String(runId));
+
+      - name: List artifacts for target run
+        id: list_artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const core = require('@actions/core');
+            const runId = core.getInput('run_id') || core.getOutput('run_id') || process.env.RUN_ID;
+            const run_id = parseInt(runId, 10);
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id,
+              per_page: 100,
+            });
+            if (!data.artifacts || !data.artifacts.length) {
+              throw new Error(`No artifacts found for run ${run_id}`);
+            }
+            // Prefer artifact starting with 'backup-restore-' otherwise take the first
+            let artifact = data.artifacts.find(a => a.name.startsWith('backup-restore-')) || data.artifacts[0];
+            core.setOutput('artifact_id', String(artifact.id));
+            core.setOutput('artifact_name', artifact.name);
+
+      - name: Download artifact zip via API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="${{ steps.resolve_run.outputs.run_id }}"
+          artifact_id="${{ steps.list_artifacts.outputs.artifact_id }}"
+          artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
+          out_dir="release_artifacts/${run_id}"
+          mkdir -p "$out_dir"
+          echo "Downloading artifact id=$artifact_id name=$artifact_name for run=$run_id"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -o "$out_dir/${artifact_name}.zip" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${artifact_id}/zip"
+          echo "Computing sha256"
+          (cd "$out_dir" && shasum -a 256 "${artifact_name}.zip" | tee "${artifact_name}.zip.sha256")
+          echo "out_dir=$out_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          run_id="${{ steps.resolve_run.outputs.run_id }}"
+          artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
+          out_dir="release_artifacts/${run_id}"
+          ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          cat > "$out_dir/RELEASE_NOTES.md" << 'EOF'
+          # Backup & Restore Artifacts
+
+          本次 Release 来源于最近一次成功的 Backup & Restore 工作流运行，包含以下内容：
+          
+          - 工件：ZIP 压缩包（内含 embedding_upsert.json 与 qdrant dump）
+          - 完整性校验：提供 sha256 摘要文件（.sha256）
+          - 运行来源：GitHub Actions backup-restore 工作流
+
+          使用方法：
+          1) 下载 ZIP 与其对应的 .sha256 文件
+          2) 本地校验：`shasum -a 256 -c <artifact>.zip.sha256`
+          3) 解压并按 Playbook 进行校验或恢复演练
+
+          参考文档：docs/backup_restore_playbook.md
+          EOF
+          echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
+          name: ${{ format('Backup Restore Artifacts (run {0})', steps.resolve_run.outputs.run_id) }}
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          files: |
+            ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
+            ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip.sha256', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Print release info
+        if: always()
+        run: |
+          echo "Released artifacts for run: ${{ steps.resolve_run.outputs.run_id }}"
+          echo "Tag: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}"
