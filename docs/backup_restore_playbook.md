@@ -1,6 +1,6 @@
 # 备份 / 恢复演练手册（Playbook）
 
-更新时间：2025-09-03 09:26 (+08:00)
+更新时间：2025-09-15 15:05 (+08:00)
 
 目的：提供可落地、可复用的 Qdrant 向量库与相关工件的备份/恢复方案与演练步骤，明确 RTO/RPO 目标与校验指引。
 
@@ -81,3 +81,117 @@ bash scripts/backup_qdrant_collection.sh
 ## 后续计划
 - 增加恢复自动化脚本（从最新备份一键导入）
 - 将恢复演练纳入季度例行检查并生成工件（日志、校验报告）
+
+---
+
+## 本次演练记录（2025-09-12 09:18 +08:00）
+
+说明：本次为小样本演练，先行验证流程与工具可靠性，避免长命令“卡住”。
+
+1) 备份（小样本）
+- 产物：`artifacts/metrics/qdrant_demo_768_dump.json`（约 3.4K）
+- 方法：`scripts/backup_qdrant_collection.sh`，设置了 curl 超时与 MAX_BATCHES 保护（参见脚本注释）
+
+2) 恢复至临时集合（隔离验证）
+- 先显式创建集合（避免依赖后端自动建表）：
+```
+curl -sS --max-time 5 -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"vectors":{"size":768,"distance":"Cosine"}}' \
+  http://127.0.0.1:6333/collections/demo_768_tmp
+```
+- 执行恢复（逐条 embed + /embedding/upsert）：
+```
+export API_BASE=http://127.0.0.1:8000
+export RAG_COLLECTION=demo_768_tmp
+export SRC_DUMP=artifacts/metrics/qdrant_demo_768_dump.json
+export BATCH_SIZE=32
+
+bash scripts/restore_qdrant_collection.sh
+```
+- 关键输出（摘要）：
+```
+[RESTORE] count=25 target=demo_768_tmp batch=32 src=artifacts/metrics/qdrant_demo_768_dump.json
+[RESTORE] 本批 22 条，累计 22
+[RESTORE] 完成，共恢复 22 条到 demo_768_tmp
+```
+
+3) 校验
+- 集合元信息：`points_count=22`（状态 green）
+- 精确计数：`{"result":{"count":22},"status":"ok"}`
+
+4) 结论
+- 流程打通：备份→恢复→计数验证全链路可用。
+- 样本量：本次备份为小样本（约 3.4K 文件，恢复 22 条），可在需要时进行全量备份/恢复复测。
+
+5) RTO/RPO（本次演练粗估）
+- RTO：小样本恢复在数秒内完成；全量取决于集合规模与嵌入速度，建议批大小 32~128，必要时并行。
+- RPO：由备份频率决定，建议每小时 1 次（可按业务要求调整）。
+
+---
+
+## 告警演练结论与复现指引（本地）
+
+1) 关键指标摘录（来源：`http://127.0.0.1:8000/metrics`；见 `artifacts/metrics/metrics_probe_summary.md`）
+- /api/v1/ask 200 次数：存在
+- /api/v1/tools/invoke：200 和 502 均存在
+- tools_requests_total、tools_errors_total：存在且随调用增长
+- llm_generate_duration_seconds_count：存在
+- tools_rate_limited_total、tools_circuit_open_total：本次未明显增量（顺序点击不足以触发限流；熔断需更稳定的失败源与窗口设定）
+
+2) 复现建议
+- 超时：在前端 `Tools` 页设置 `timeout_ms=50`；请求 `https://httpbin.org/delay/3`；预期 502（ConnectTimeout）。
+- 熔断：使用固定失败目标 `https://invalid.invalid/`，设置 `retry_max=0, circuit_threshold=1, circuit_cooldown_ms=5000`，快速连点 ≥2 次；5s 后再点一次验证恢复；如仍无指标增量，建议在后端增加更直接的熔断打开计数指标。
+- 限流：设置 `rate_limit_per_sec=2`，以高频快速连点（或小脚本 10 并发）模拟突发；随后查看 `tools_rate_limited_total` 是否增量。
+
+3) CI 冒烟阈值
+- 已在 `/.github/workflows/metrics-e2e.yml` 增加“Assert basic metrics thresholds (smoke gate)”步骤，防止关键指标缺失：
+  - `/api/v1/ask` 的 200 计数
+  - `tools_requests_total` 存在
+  - `llm_generate_duration_seconds_count` 存在
+
+---
+
+## GitHub Actions Run #8 结果与工件
+
+- 运行链接：https://github.com/Neal-yes/AI_Support_System/actions/runs/17721278528
+- 工件下载：
+  - https://github.com/Neal-yes/AI_Support_System/actions/runs/17721278528/artifacts/4008842495
+- Job Summary（关键指标）：
+  - collection: `default_collection`
+  - seed_total: `5`
+  - backup_total: `5`
+  - restored_total: `5`
+  - backup_duration_seconds: `0`
+  - restore_duration_seconds (RTO): `1`
+  - src: `demo.jsonl`
+- 结论：备份与恢复一致性通过（backup_total=restored_total），RTO≈1s；流程稳定，工件上传成功。
+
+### 工件校验（本地验证）
+
+- 校验时间：2025-09-15 11:52 (+08:00)
+- 本地路径：`download_artifacts/17721278528/`
+- 校验结果：
+  - `embedding_upsert.json`
+    - total=5，src=demo.jsonl，collection=default_collection（断言通过）
+  - `qdrant_default_collection_dump.json`
+    - 文件结构为列表（list），长度=5（断言通过）
+    - 抽样条目字段：`{"id": <uuid>, "payload": {"tag": "faq", "text": "...", "question": "...", "answer": null}}`
+
+## GitHub Actions Run #9 结果与工件
+
+- 运行链接：https://github.com/Neal-yes/AI_Support_System/actions/runs/17724192239
+- 工件下载：
+  - https://github.com/Neal-yes/AI_Support_System/actions/runs/17724192239/artifacts/4009654929
+- Job Summary（关键指标）：
+  - collection: `default_collection`
+  - seed_total: `5`
+  - backup_total: `5`
+  - restored_total: `5`
+  - backup_duration_seconds: `1`
+  - restore_duration_seconds (RTO): `0`
+  - src: `demo.jsonl`
+- 校验摘要（已集成到 Job Summary 的 Artifact Validation）：
+  - `embedding_upsert.json`: total=5, src=demo.jsonl, collection=default_collection
+  - `qdrant_default_collection_dump.json`: type=list, len=5；sample keys: ['id', 'payload']
+- 结论：新增“Validate artifacts”步骤验证通过；备份与恢复一致性通过，RTO≈0s；工件上传成功。
