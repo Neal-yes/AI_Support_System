@@ -191,6 +191,8 @@ jobs:
 
       - name: Generate release notes
         id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           run_id="${{ steps.resolve_run.outputs.run_id }}"
@@ -213,6 +215,48 @@ jobs:
 
           参考文档：docs/backup_restore_playbook.md
           EOF
+          # Derive Run Metrics
+          metrics_section=""
+          emb_json="$out_dir/embedding_upsert.json"
+          dump_json="$out_dir/qdrant_dump.json"
+          coll=""
+          src=""
+          total=""
+          restored_total=""
+          if [ -f "$emb_json" ]; then
+            coll=$(jq -r '.collection // empty' "$emb_json" || true)
+            src=$(jq -r '.src // empty' "$emb_json" || true)
+            total=$(jq -r '.total // empty' "$emb_json" || true)
+          fi
+          if [ -f "$dump_json" ]; then
+            restored_total=$(jq -r 'if type=="object" then (.points // []) | length else length end' "$dump_json" || true)
+          fi
+          # RTO seconds from workflow run timing
+          rto_secs=""
+          run_json="$out_dir/run_${run_id}.json"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${run_id}" -o "$run_json" || true
+          if [ -s "$run_json" ]; then
+            started=$(jq -r '.run_started_at // .created_at // empty' "$run_json" || true)
+            updated=$(jq -r '.updated_at // .completed_at // empty' "$run_json" || true)
+            if [ -n "$started" ] && [ -n "$updated" ]; then
+              start_epoch=$(date -d "$started" +%s || true)
+              end_epoch=$(date -d "$updated" +%s || true)
+              if [ -n "$start_epoch" ] && [ -n "$end_epoch" ]; then
+                rto_secs=$(( end_epoch - start_epoch ))
+              fi
+            fi
+          fi
+          {
+            echo;
+            echo "## Run Metrics";
+            echo;
+            [ -n "$coll" ] && echo "- collection: $coll" || true;
+            [ -n "$src" ] && echo "- src: $src" || true;
+            [ -n "$total" ] && echo "- seed_total: $total" || true;
+            [ -n "$restored_total" ] && echo "- restored_total: $restored_total" || true;
+            [ -n "$rto_secs" ] && echo "- RTO_seconds: $rto_secs" || true;
+          } >> "$out_dir/RELEASE_NOTES.md"
           if [ -f "$out_dir/VALIDATION_SUMMARY.txt" ]; then
             {
               echo;
