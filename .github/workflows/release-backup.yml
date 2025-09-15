@@ -15,6 +15,10 @@ on:
         description: "Optional: release name (defaults to auto-generated)"
         required: false
         type: string
+  workflow_run:
+    workflows: ["Backup & Restore Qdrant"]
+    types:
+      - completed
 
 permissions:
   contents: write
@@ -24,6 +28,15 @@ jobs:
   release-backup:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Run when: manual, or backup-restore completed successfully on main
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'workflow_run' &&
+           github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.head_branch == 'main') }}
+    env:
+      # When triggered by workflow_run, provide the completed backup-restore run id
+      RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +48,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const envRun = process.env.RUN_ID || '';
             const runInput = core.getInput('run_id');
 
             // Helper: find workflow by file path
@@ -49,7 +63,12 @@ jobs:
               return wf;
             }
 
-            let runId = runInput && runInput.trim().length ? parseInt(runInput.trim(), 10) : 0;
+            let runId = 0;
+            if (envRun && String(envRun).trim().length) {
+              runId = parseInt(String(envRun).trim(), 10);
+            } else if (runInput && runInput.trim().length) {
+              runId = parseInt(runInput.trim(), 10);
+            }
             if (!runId) {
               const wf = await getWorkflowByPath('.github/workflows/backup-restore.yml');
               const { data } = await github.rest.actions.listWorkflowRuns({
@@ -120,11 +139,30 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y jq unzip
           echo "Listing zip entries"
-          unzip -Z1 "$out_dir/${artifact_name}.zip" | sed -n '1,100p'
-          echo "Extracting..."
-          unzip -o "$out_dir/${artifact_name}.zip" -d "$extract_dir" >/dev/null
-          emb_path=$(find "$extract_dir" -type f -path '*/artifacts/metrics/embedding_upsert.json' | head -n1)
-          dump_path=$(find "$extract_dir" -type f -regex '.*/artifacts/metrics/qdrant_.*_dump.json' | head -n1)
+          entries=$(unzip -Z1 "$out_dir/${artifact_name}.zip")
+          echo "$entries" | sed -n '1,100p'
+          echo "Extracting matched entries deterministically using unzip -p ..."
+          emb_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?embedding_upsert.json$' | head -n1 || true)
+          dump_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?qdrant_.*_dump.json$' | head -n1 || true)
+          emb_path=""
+          dump_path=""
+          if [ -n "$emb_entry" ]; then
+            unzip -p "$out_dir/${artifact_name}.zip" "$emb_entry" > "$out_dir/embedding_upsert.json" || true
+            emb_path="$out_dir/embedding_upsert.json"
+          fi
+          if [ -n "$dump_entry" ]; then
+            unzip -p "$out_dir/${artifact_name}.zip" "$dump_entry" > "$out_dir/qdrant_dump.json" || true
+            dump_path="$out_dir/qdrant_dump.json"
+          fi
+          # Fallback to filesystem search only if needed
+          if [ -z "$emb_path" ] || [ -z "$dump_path" ]; then
+            echo "Falling back to filesystem search in extract dir..."
+            unzip -o "$out_dir/${artifact_name}.zip" -d "$extract_dir" >/dev/null || true
+            echo "Extraction tree (top 200 lines):"
+            (cd "$extract_dir" && find . -maxdepth 4 -type f -printf '%p\n' | sed -n '1,200p') || true
+            [ -z "$emb_path" ] && emb_path=$(find "$extract_dir" -type f -name 'embedding_upsert.json' | head -n1)
+            [ -z "$dump_path" ] && dump_path=$(find "$extract_dir" -type f -regex '.*/qdrant_.*_dump.json' | head -n1)
+          fi
           if [ -z "$emb_path" ] || [ -z "$dump_path" ]; then
             echo "embedding_upsert.json or qdrant_*_dump.json not found in artifact; writing warning summary and continuing" >&2
             {
