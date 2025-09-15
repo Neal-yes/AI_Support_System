@@ -511,6 +511,49 @@ jobs:
             echo "- Grafana Fetch: ${GF_STATUS}";
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Emit metrics_e2e_summary.txt
+        if: always()
+        env:
+          MODEL_SMALL: ${{ env.MODEL_SMALL }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/metrics
+          MODEL_VAL="${MODEL_SMALL:-qwen2:0.5b}"
+          # RL sum if exists
+          RL_SUM=""
+          if [ -f artifacts/metrics/metrics_after_burst.prom ]; then
+            RL_SUM=$(awk '/^tools_rate_limited_total\{/ {s+=$NF} END{printf("%.9f", s+0)}' artifacts/metrics/metrics_after_burst.prom || echo "")
+          fi
+          # Smoke result if exists
+          SMOKE_RESULT=""
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            SMOKE_RESULT=$(grep -E '^- result: ' artifacts/metrics/smoke_summary.md | head -n1 | sed 's/^- result: //')
+          fi
+          # Grafana status
+          if [ -f artifacts/metrics/grafana_cookies.txt ]; then
+            GF_STATUS="Performed login and fetch (cookie present)"
+          else
+            GF_STATUS="Skipped (no cookie; secrets likely missing)"
+          fi
+          {
+            echo "# Metrics E2E Summary";
+            echo;
+            echo "- MODEL_SMALL: ${MODEL_VAL}";
+            [ -n "$SMOKE_RESULT" ] && echo "- Smoke result: ${SMOKE_RESULT}" || true;
+            [ -n "$RL_SUM" ] && echo "- RL sum after burst: ${RL_SUM}" || true;
+            echo "- Grafana Fetch: ${GF_STATUS}";
+            # Append RAG gate metrics if present
+            if [ -f artifacts/metrics/rag_gate_summary.md ]; then
+              # Try to extract key lines from rag gate summary
+              HR=$(grep -E '^- Hit ratio:' artifacts/metrics/rag_gate_summary.md | head -n1 | sed 's/^[-] \?//') || true
+              AT1=$(grep -E '^- Avg top1:' artifacts/metrics/rag_gate_summary.md | head -n1 | sed 's/^[-] \?//') || true
+              TOT=$(grep -E '^- Total samples:' artifacts/metrics/rag_gate_summary.md | head -n1 | sed 's/^[-] \?//') || true
+              [ -n "$TOT" ] && echo "$TOT" || true
+              [ -n "$HR" ] && echo "$HR" || true
+              [ -n "$AT1" ] && echo "$AT1" || true
+            fi
+          } > artifacts/metrics/metrics_e2e_summary.txt
+
       - name: Dump docker logs on failure or cancel
         if: failure() || cancelled()
         run: |
