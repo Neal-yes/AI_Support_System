@@ -11,6 +11,10 @@ on:
         description: "Optional: tag name for release (defaults to auto-generated)"
         required: false
         type: string
+      name:
+        description: "Optional: release name (defaults to auto-generated)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -105,6 +109,42 @@ jobs:
           (cd "$out_dir" && shasum -a 256 "${artifact_name}.zip" | tee "${artifact_name}.zip.sha256")
           echo "out_dir=$out_dir" >> "$GITHUB_OUTPUT"
 
+      - name: Extract artifact and generate validation summary
+        run: |
+          set -euo pipefail
+          run_id="${{ steps.resolve_run.outputs.run_id }}"
+          artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
+          out_dir="release_artifacts/${run_id}"
+          extract_dir="$out_dir/extract"
+          mkdir -p "$extract_dir"
+          sudo apt-get update -y
+          sudo apt-get install -y jq unzip
+          echo "Listing zip entries"
+          unzip -Z1 "$out_dir/${artifact_name}.zip" | sed -n '1,100p'
+          echo "Extracting..."
+          unzip -o "$out_dir/${artifact_name}.zip" -d "$extract_dir" >/dev/null
+          emb_path=$(find "$extract_dir" -type f -path '*/artifacts/metrics/embedding_upsert.json' | head -n1)
+          dump_path=$(find "$extract_dir" -type f -regex '.*/artifacts/metrics/qdrant_.*_dump.json' | head -n1)
+          if [ -z "$emb_path" ] || [ -z "$dump_path" ]; then
+            echo "embedding_upsert.json or qdrant_*_dump.json not found in artifact" >&2
+            exit 1
+          fi
+          echo "emb_path=$emb_path"
+          echo "dump_path=$dump_path"
+          exp_total=$(jq -r '.total' "$emb_path")
+          exp_src=$(jq -r '.src' "$emb_path")
+          exp_coll=$(jq -r '.collection' "$emb_path")
+          echo "Derived expects: total=$exp_total src=$exp_src coll=$exp_coll"
+          # Run validation script to generate a friendly summary; never fail release even if validation fails
+          python3 scripts/validate_backup_artifacts.py \
+            --emb "$emb_path" \
+            --dump "$dump_path" \
+            --expect-total "$exp_total" \
+            --expect-src "$exp_src" \
+            --expect-collection "$exp_coll" \
+            --sample-count 3 \
+            > "$out_dir/VALIDATION_SUMMARY.txt" || true
+
       - name: Generate release notes
         id: notes
         run: |
@@ -129,14 +169,25 @@ jobs:
 
           参考文档：docs/backup_restore_playbook.md
           EOF
+          if [ -f "$out_dir/VALIDATION_SUMMARY.txt" ]; then
+            {
+              echo;
+              echo "## Artifact Validation (auto-generated)";
+              echo;
+              echo '```text';
+              cat "$out_dir/VALIDATION_SUMMARY.txt";
+              echo '```';
+            } >> "$out_dir/RELEASE_NOTES.md"
+          fi
           echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
-          name: ${{ format('Backup Restore Artifacts (run {0})', steps.resolve_run.outputs.run_id) }}
+          name: ${{ inputs.name || format('Backup Restore Artifacts (run {0})', steps.resolve_run.outputs.run_id) }}
           body_path: ${{ steps.notes.outputs.notes_path }}
+          allowUpdates: true
           files: |
             ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
             ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip.sha256', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
