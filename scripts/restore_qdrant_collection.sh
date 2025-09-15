@@ -40,7 +40,10 @@ if [ "$COUNT" = "0" ]; then
   exit 0
 fi
 
-echo "[RESTORE] 从 $SRC_DUMP 恢复 $COUNT 条到集合 $COLL（batch=$BATCH_SIZE）"
+set +u
+echo "[RESTORE] API_BASE=${API_BASE} COLL=${COLL} SRC_DUMP=${SRC_DUMP} BATCH_SIZE=${BATCH_SIZE}" >&2
+echo "[RESTORE] count=${COUNT} target=${COLL} batch=${BATCH_SIZE} src=${SRC_DUMP}" >&2
+set -u
 
 OFFSET=0
 TOTAL=0
@@ -53,22 +56,29 @@ while [ $OFFSET -lt $COUNT ]; do
   PAYLOADS=$(echo "$SLICE" | jq -c '[ .[].payload ]')
 
   # 跳过空批
-  if [ "$(echo "$TEXTS" | jq 'length')" = "0" ]; then
+  if [ "$(echo "$TEXTS" | jq -r 'length')" = "0" ]; then
     OFFSET=$(( OFFSET + SIZE ))
     continue
-  }
+  fi
 
-  BODY=$(jq -n \
-    --argjson texts "$TEXTS" \
-    --argjson payloads "$PAYLOADS" \
-    --arg coll "$COLL" \
-    --arg model "${RAG_MODEL}" '
-      {texts:$texts, payloads:$payloads, collection:$coll}
-      + (if $model == "" then {} else {model:$model} end)
-    ')
+  # 构造请求体：根据是否设置 RAG_MODEL 分支
+  if [ -n "${RAG_MODEL}" ]; then
+    BODY=$(jq -n \
+      --argjson texts "$TEXTS" \
+      --argjson payloads "$PAYLOADS" \
+      --arg coll "$COLL" \
+      --arg model "${RAG_MODEL}" \
+      '{texts:$texts, payloads:$payloads, collection:$coll, model:$model}')
+  else
+    BODY=$(jq -n \
+      --argjson texts "$TEXTS" \
+      --argjson payloads "$PAYLOADS" \
+      --arg coll "$COLL" \
+      '{texts:$texts, payloads:$payloads, collection:$coll}')
+  fi
 
   set +e
-  HC=$(curl -sS -o /tmp/restore_upsert.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/embedding/upsert")
+  HC=$(curl -sS --connect-timeout 2 --max-time 10 -o /tmp/restore_upsert.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/embedding/upsert")
   RC=$?
   set -e
   if [ $RC -ne 0 ] || [ "$HC" != "200" ]; then
