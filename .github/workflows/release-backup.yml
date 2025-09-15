@@ -31,7 +31,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const core = require('@actions/core');
             const runInput = core.getInput('run_id');
 
             // Helper: find workflow by file path
@@ -67,11 +66,12 @@ jobs:
       - name: List artifacts for target run
         id: list_artifacts
         uses: actions/github-script@v7
+        env:
+          TARGET_RUN_ID: ${{ steps.resolve_run.outputs.run_id }}
         with:
           script: |
-            const core = require('@actions/core');
-            const runId = core.getInput('run_id') || core.getOutput('run_id') || process.env.RUN_ID;
-            const run_id = parseInt(runId, 10);
+            const runIdSrc = process.env.TARGET_RUN_ID || core.getInput('run_id');
+            const run_id = parseInt(runIdSrc, 10);
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
