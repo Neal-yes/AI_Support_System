@@ -33,6 +33,7 @@ def main():
     p.add_argument("--expect-total", type=int, default=5)
     p.add_argument("--expect-src", default="demo.jsonl")
     p.add_argument("--expect-collection", default="default_collection")
+    p.add_argument("--sample-count", type=int, default=3, help="Number of sample points to print on failure")
     args = p.parse_args()
 
     emb_path = Path(args.emb)
@@ -86,6 +87,25 @@ def main():
         ok = False
         lines.append(f"ERROR reading {dump_path}: {ex}")
 
+    # On failure, include first N sample points for quick diagnosis (id + selected payload fields)
+    if not ok:
+        try:
+            samples = []
+            for item in points[: max(0, args.sample_count)]:
+                if isinstance(item, dict):
+                    pid = item.get("id")
+                    payload = item.get("payload", {}) or {}
+                    preview = {k: payload.get(k) for k in ("tag", "text", "question", "answer") if k in payload}
+                    samples.append({"id": pid, "payload": preview})
+                else:
+                    samples.append(str(item)[:200])
+            if samples:
+                lines.append("samples:")
+                for i, s in enumerate(samples, 1):
+                    lines.append(f"  - [{i}] {s}")
+        except Exception as ex:
+            lines.append(f"ERROR generating samples preview: {ex}")
+
     # Print report
     report = "\n".join(lines)
     print(report)
@@ -97,7 +117,7 @@ def main():
             f.write("\n\n### Artifact Validation\n\n")
             f.write("```text\n")
             f.write(report)
-            f.write("\n````\n"[:-1])  # writes "```\n"
+            f.write("\n```\n")
 
     if not ok:
         print("Validation failed", file=sys.stderr)
