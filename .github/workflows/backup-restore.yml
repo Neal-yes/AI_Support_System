@@ -196,6 +196,16 @@ jobs:
           # hard assert equality
           test "${{ steps.bk.outputs.bk_total }}" = "${{ steps.rv.outputs.restored_total }}"
 
+      - name: Validate artifacts
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_backup_artifacts.py \
+            --emb artifacts/metrics/embedding_upsert.json \
+            --dump artifacts/metrics/qdrant_${{ steps.seed.outputs.coll }}_dump.json \
+            --expect-total ${{ steps.seed.outputs.total }} \
+            --expect-src ${{ steps.seed.outputs.src }} \
+            --expect-collection ${{ steps.seed.outputs.coll }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
