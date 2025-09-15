@@ -201,8 +201,8 @@ jobs:
         with:
           name: backup-restore-${{ github.run_id }}-1
           path: |
-            ${OUT_DIR}/embedding_upsert.json
-            ${OUT_DIR}/qdrant_${{ steps.seed.outputs.coll }}_dump.json
+            artifacts/metrics/embedding_upsert.json
+            artifacts/metrics/qdrant_${{ steps.seed.outputs.coll }}_dump.json
 
       - name: Teardown
         if: always()
