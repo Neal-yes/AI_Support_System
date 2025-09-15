@@ -2,6 +2,9 @@ name: Backup & Restore Qdrant
 
 on:
   workflow_dispatch:
+  schedule:
+    # Daily at 03:00 Asia/Shanghai (19:00 UTC)
+    - cron: '0 19 * * *'
 
 permissions:
   contents: read
@@ -213,6 +216,7 @@ jobs:
           path: |
             artifacts/metrics/embedding_upsert.json
             artifacts/metrics/qdrant_${{ steps.seed.outputs.coll }}_dump.json
+          retention-days: 14
 
       - name: Teardown
         if: always()
