@@ -144,6 +144,7 @@ jobs:
           echo "Extracting matched entries deterministically using unzip -p ..."
           emb_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?embedding_upsert.json$' | head -n1 || true)
           dump_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?qdrant_.*_dump.json$' | head -n1 || true)
+          ci_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?ci_summary.txt$' | head -n1 || true)
           emb_path=""
           dump_path=""
           if [ -n "$emb_entry" ]; then
@@ -153,6 +154,9 @@ jobs:
           if [ -n "$dump_entry" ]; then
             unzip -p "$out_dir/${artifact_name}.zip" "$dump_entry" > "$out_dir/qdrant_dump.json" || true
             dump_path="$out_dir/qdrant_dump.json"
+          fi
+          if [ -n "$ci_entry" ]; then
+            unzip -p "$out_dir/${artifact_name}.zip" "$ci_entry" > "$out_dir/ci_summary.txt" || true
           fi
           # Fallback to filesystem search only if needed
           if [ -z "$emb_path" ] || [ -z "$dump_path" ]; then
@@ -264,6 +268,16 @@ jobs:
               echo;
               echo '```text';
               cat "$out_dir/VALIDATION_SUMMARY.txt";
+              echo '```';
+            } >> "$out_dir/RELEASE_NOTES.md"
+          fi
+          if [ -f "$out_dir/ci_summary.txt" ]; then
+            {
+              echo;
+              echo "## CI Summary";
+              echo;
+              echo '```text';
+              cat "$out_dir/ci_summary.txt";
               echo '```';
             } >> "$out_dir/RELEASE_NOTES.md"
           fi

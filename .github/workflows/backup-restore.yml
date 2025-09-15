@@ -199,6 +199,23 @@ jobs:
           # hard assert equality
           test "${{ steps.bk.outputs.bk_total }}" = "${{ steps.rv.outputs.restored_total }}"
 
+      - name: Emit consolidated CI summary file
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUT_DIR}"
+          ci_file="${OUT_DIR}/ci_summary.txt"
+          {
+            echo "# Consolidated CI Summary";
+            echo;
+            echo "- collection: ${{ steps.seed.outputs.coll }}";
+            echo "- seed_total: ${{ steps.seed.outputs.total }}";
+            echo "- backup_total: ${{ steps.bk.outputs.bk_total }}";
+            echo "- restored_total: ${{ steps.rv.outputs.restored_total }}";
+            echo "- src: ${{ steps.seed.outputs.src }}";
+            echo "- backup_duration_seconds: $(($(date +%s) - ${{ steps.t0.outputs.ts }}))";
+            echo "- restore_duration_seconds (RTO): $(($(date +%s) - ${{ steps.t1.outputs.ts }}))";
+          } > "$ci_file"
+
       - name: Validate artifacts
         run: |
           set -euo pipefail
@@ -216,6 +233,7 @@ jobs:
           path: |
             artifacts/metrics/embedding_upsert.json
             artifacts/metrics/qdrant_${{ steps.seed.outputs.coll }}_dump.json
+            artifacts/metrics/ci_summary.txt
           retention-days: 14
 
       - name: Teardown
