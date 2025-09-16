@@ -67,6 +67,10 @@ jobs:
               echo "GRAFANA_ADMIN_PASSWORD=admin";
             } > .env
           fi
+          # Export a canonical snapshot for downstream release fallback parsing
+          if [ -f "$in" ]; then
+            cp -f "$in" artifacts/metrics/api_metrics.prom || true
+          fi
 
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
         run: |
@@ -260,9 +264,12 @@ jobs:
         run: |
           set +e
           echo "RAG preflight: logging backend defaults"
-          curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d '{"query":"ping","use_rag":true,"options":{"num_predict":1}}' \
-            http://localhost:8000/api/v1/rag/preflight | tee artifacts/metrics/rag_preflight.json || true
+          for i in 1 2 3; do
+            curl -fsS -X POST -H 'Content-Type: application/json' \
+              -d '{"query":"ping","use_rag":true,"options":{"num_predict":1}}' \
+              http://localhost:8000/api/v1/rag/preflight | tee artifacts/metrics/rag_preflight.json || true
+            sleep 1
+          done
 
       - name: Warm up ask API (non-blocking)
         run: |
@@ -425,6 +432,75 @@ jobs:
           fi
           echo "Basic metrics assertions passed"
 
+      - name: Compute latency percentiles and API success
+        if: always()
+        run: |
+          set -euo pipefail
+          in="artifacts/metrics/metrics_probe.prom"
+          out_lat="artifacts/metrics/latency_percentiles.txt"
+          out_api="artifacts/metrics/api_success.txt"
+          out_api2="artifacts/metrics/api_success_extra.txt"
+          if [ -f "$in" ]; then
+            llm_count=$(awk '/^llm_generate_duration_seconds_count/ {c=$NF} END{print (c==""?0:c)}' "$in")
+            rag_count=$(awk '/^rag_retrieval_duration_seconds_count/ {c=$NF} END{print (c==""?0:c)}' "$in")
+            calc_pctile() {
+              local prefix="$1" pct="$2" cnt="$3"
+              awk -v tgt=$(awk -v c="$cnt" -v p="$pct" 'BEGIN{printf("%.6f", p*c)}') -v pre="$prefix" '
+                ("^" pre "_bucket\\{") ~ $0 {
+                  if (match($0,/le="([^"]+)"/,m)) {
+                    le=m[1]; if (le=="+Inf") next; v=$NF; data[le+0]=v+0
+                  }
+                }
+                END{
+                  n=asorti(data, k, "@ind_num_asc");
+                  for(i=1;i<=n;i++){ if (data[k[i]]>=tgt) { printf("%.3f", k[i]); exit } }
+                  if(n>0) printf("%.3f", k[n]);
+                }' "$in"
+            }
+            {
+              echo '# Latency percentiles (approx from histogram)'
+              echo
+              if [ "${llm_count}" != "0" ]; then
+                v50=$(calc_pctile llm_generate_duration_seconds 0.50 "$llm_count"); [ -n "$v50" ] && echo "- LLM generate p50: $v50 s"
+                v90=$(calc_pctile llm_generate_duration_seconds 0.90 "$llm_count"); [ -n "$v90" ] && echo "- LLM generate p90: $v90 s"
+                v95=$(calc_pctile llm_generate_duration_seconds 0.95 "$llm_count"); [ -n "$v95" ] && echo "- LLM generate p95: $v95 s"
+                v99=$(calc_pctile llm_generate_duration_seconds 0.99 "$llm_count"); [ -n "$v99" ] && echo "- LLM generate p99: $v99 s"
+                echo "- LLM samples: ${llm_count}"
+              fi
+              if [ "${rag_count}" != "0" ]; then
+                v50=$(calc_pctile rag_retrieval_duration_seconds 0.50 "$rag_count"); [ -n "$v50" ] && echo "- RAG retrieval p50: $v50 s"
+                v90=$(calc_pctile rag_retrieval_duration_seconds 0.90 "$rag_count"); [ -n "$v90" ] && echo "- RAG retrieval p90: $v90 s"
+                v95=$(calc_pctile rag_retrieval_duration_seconds 0.95 "$rag_count"); [ -n "$v95" ] && echo "- RAG retrieval p95: $v95 s"
+                v99=$(calc_pctile rag_retrieval_duration_seconds 0.99 "$rag_count"); [ -n "$v99" ] && echo "- RAG retrieval p99: $v99 s"
+                echo "- RAG samples: ${rag_count}"
+              fi
+            } > "$out_lat"
+            # API success rate for /api/v1/ask
+            {
+              echo '# API Success (/api/v1/ask)'
+              ok=$(awk '/^http_requests_total\{/ && /path="\/api\/v1\/ask"/ && /status="200"/ {s+=$NF} END{printf("%.0f", s+0)}' "$in")
+              all=$(awk '/^http_requests_total\{/ && /path="\/api\/v1\/ask"/ {s+=$NF} END{printf("%.0f", s+0)}' "$in")
+              rate="N/A"; if [ "$all" != "0" ]; then rate=$(awk -v a="$ok" -v b="$all" 'BEGIN{printf("%.2f%%", (b>0?100.0*a/b:0))}'); fi
+              echo "- ok: $ok"
+              echo "- total: $all"
+              echo "- success_rate: $rate"
+            } > "$out_api"
+            # API success for extra endpoints
+            {
+              echo '# API Success (extra)'
+              for endpoint in "/api/v1/rag/preflight" "/embedding/upsert"; do
+                key=$(echo "$endpoint" | sed 's/\//_/g')
+                ok=$(awk -v ep="$endpoint" '/^http_requests_total\{/ && $0 ~ "path=\""ep"\"" && /status="200"/ {s+=$NF} END{printf("%.0f", s+0)}' "$in")
+                all=$(awk -v ep="$endpoint" '/^http_requests_total\{/ && $0 ~ "path=\""ep"\"" {s+=$NF} END{printf("%.0f", s+0)}' "$in")
+                rate="N/A"; if [ "$all" != "0" ]; then rate=$(awk -v a="$ok" -v b="$all" 'BEGIN{printf("%.2f%%", (b>0?100.0*a/b:0))}'); fi
+                echo "- endpoint: $endpoint"
+                echo "  ok: $ok"
+                echo "  total: $all"
+                echo "  success_rate: $rate"
+              done
+            } > "$out_api2"
+          fi
+
       - name: Rate-limit burst (trigger) and assert
         env:
           # 收紧参数以稳定触发限流：1 rps 限额 + 16 并发突发
@@ -551,6 +627,21 @@ jobs:
               [ -n "$TOT" ] && echo "$TOT" || true
               [ -n "$HR" ] && echo "$HR" || true
               [ -n "$AT1" ] && echo "$AT1" || true
+            fi
+            # Append latency percentiles if computed
+            if [ -f artifacts/metrics/latency_percentiles.txt ]; then
+              echo;
+              sed -n '1,80p' artifacts/metrics/latency_percentiles.txt || true
+            fi
+            # Append API success
+            if [ -f artifacts/metrics/api_success.txt ]; then
+              echo;
+              sed -n '1,40p' artifacts/metrics/api_success.txt || true
+            fi
+            # Append extra APIs success
+            if [ -f artifacts/metrics/api_success_extra.txt ]; then
+              echo;
+              sed -n '1,80p' artifacts/metrics/api_success_extra.txt || true
             fi
           } > artifacts/metrics/metrics_e2e_summary.txt
 
