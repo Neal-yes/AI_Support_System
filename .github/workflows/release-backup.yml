@@ -119,7 +119,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          # be tolerant to missing optional inputs/artifacts
+          set +e
+          set -o pipefail
           run_id="${{ steps.resolve_run.outputs.run_id }}"
           artifact_id="${{ steps.list_artifacts.outputs.artifact_id }}"
           artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
@@ -136,7 +138,8 @@ jobs:
 
       - name: Extract artifact and generate validation summary
         run: |
-          set -euo pipefail
+          # be tolerant to missing optional inputs/artifacts
+          set -uo pipefail
           run_id="${{ steps.resolve_run.outputs.run_id }}"
           artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
           out_dir="release_artifacts/${run_id}"
@@ -395,25 +398,18 @@ jobs:
                   awk -v a="$ok" -v b="$total" 'BEGIN{printf("%.2f%%", (b>0? (a/b*100.0): 0))}'
                 fi
               }
-              # helper: p95 for histogram buckets: metric_bucket{le="x"...}
+              # helper: p95 for histogram buckets: metric_bucket{le="x"...} (portable, no gawk asort)
               p95_for_metric() {
                 local name="$1"; local f="$2"
-                # aggregate counts by le across all label sets
-                awk -v name="$name" '
-                  $0 ~ ("^"name"_bucket\\{") {
-                    match($0, /le=\"([^\"]+)\"/ , m); le=m[1];
-                    val=$NF; if (val+0==val) sum[le]+=val; total+=0
-                  }
-                  $0 ~ ("^"name"_count\\{") { c=$NF; if (c+0==c) total+=c }
-                  END{
-                    target=0.95*total; p=""; acc=0;
-                    # order thresholds numerically, handle +Inf last
-                    for (k in sum) { if (k!="+Inf") keys[++n]=k }
-                    asort(keys)
-                    for (i=1;i<=n;i++){ acc+=sum[keys[i]]; if (acc>=target){ p=keys[i]; break } }
-                    if (p=="" && sum["+Inf"]>0) p="+Inf";
-                    if (p!="") print p;
-                  }' "$f"
+                local total target
+                total=$(grep -E "^${name}_count\\{" "$f" | awk '{s+=$NF} END{printf("%f", s+0)}') || total="0"
+                if [ -z "$total" ] || [ "$total" = "0" ]; then return; fi
+                target=$(awk -v t="$total" 'BEGIN{printf("%f", t*0.95)}')
+                grep -E "^${name}_bucket\\{.*le=\"[^\"]+\"" "$f" | \
+                  sed -E 's/.*le=\"([^\"]+)\".*} *([0-9.]+).*/\1 \2/' | \
+                  awk '{a[$1]+=$2} END{for (k in a) print k, a[k]}' | \
+                  awk '$1!="+Inf"{print $0}' | sort -k1,1g | \
+                  awk -v target="$target" 'BEGIN{acc=0} {acc+=$2; if (acc>=target && res==""){res=$1}} END{if(res!="") print res; else print ""}'
               }
               [ -z "$ask_rate" ] && ask_rate=$(rate_for_path "/api/v1/ask" "$metrics_prom") || true
               [ -z "$upsert_rate" ] && upsert_rate=$(rate_for_path "/embedding/upsert" "$metrics_prom") || true
@@ -453,7 +449,7 @@ jobs:
             echo "upsert_rate=$upsert_rate"
             echo "llm_p95=$llm_p95 rag_p95=$rag_p95"
             echo "llm_samples=$llm_samples rag_samples=$rag_samples"
-            echo "has_metrics_prom=$([ -f "$metrics_prom" ] && echo 1 || echo 0)"
+            echo "has_metrics_prom=$([ -f \"$metrics_prom\" ] && echo 1 || echo 0)"
             echo "-- RELEASE_NOTES.md (first 120 lines) --"
             sed -n '1,120p' "$out_dir/RELEASE_NOTES.md" || true
             echo "::endgroup::"
@@ -498,6 +494,8 @@ jobs:
           fi
           echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          # Do not fail this step due to optional content issues
+          exit 0
 
       - name: Create or Update GitHub Release (only if changed/new or forced)
         if: steps.notes.outputs.changed == 'true' || inputs.force == true
