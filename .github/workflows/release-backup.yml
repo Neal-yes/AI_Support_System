@@ -446,15 +446,7 @@ jobs:
             warn_head="⚠️ Warnings: ${warn_msgs[*]}\n\n"
           fi
 
-          # Decide if we should send notifications: only when warnings present
-          should_notify="false"
-          if [ ${#warn_msgs[@]} -gt 0 ]; then
-            should_notify="true"
-          fi
-          if [ "$should_notify" != "true" ]; then
-            echo "No changes and no warnings; skip notifications."
-            exit 0
-          }
+          # Hotfix: always proceed (webhooks may be empty), avoid early-exit branch
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
             payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Key Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{text:$text}')
