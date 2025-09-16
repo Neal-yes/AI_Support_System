@@ -19,6 +19,8 @@ on:
     workflows: ["Backup & Restore Qdrant"]
     types:
       - completed
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -281,6 +283,32 @@ jobs:
               echo '```';
             } >> "$out_dir/RELEASE_NOTES.md"
           fi
+          # Append Run Links (metrics-e2e latest success, backup-restore source, this release)
+          {
+            echo;
+            echo "## Run Links";
+            echo;
+            # backup-restore run
+            echo "- backup-restore: https://github.com/${{ github.repository }}/actions/runs/${run_id}";
+            # release run
+            echo "- release: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}";
+            # metrics-e2e latest success
+            m_url=""
+            wf_json="$out_dir/_workflows.json";
+            runs_json="$out_dir/_metrics_e2e_runs.json";
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json" || true
+            wf_id=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json" | head -n1 || true)
+            if [ -n "$wf_id" ]; then
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&per_page=1" -o "$runs_json" || true
+              m_run=$(jq -r '.workflow_runs[0].id // empty' "$runs_json" || true)
+              if [ -n "$m_run" ]; then
+                m_url="https://github.com/${{ github.repository }}/actions/runs/${m_run}"
+                echo "- metrics-e2e: $m_url";
+              fi
+            fi
+          } >> "$out_dir/RELEASE_NOTES.md"
           echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
@@ -295,6 +323,29 @@ jobs:
             ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip.sha256', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify release success (Slack/Lark optional)
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          run_id="${{ steps.resolve_run.outputs.run_id }}"
+          tag_name="${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${tag_name}"
+          notes_path='${{ steps.notes.outputs.notes_path }}'
+          # Extract a few metrics lines to include in notification
+          summary_lines=$(sed -n '/^## Run Metrics$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
+
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\nRun Metrics:\n${summary_lines}" '{text:$text}')
+            curl -fsSL -H 'Content-Type: application/json' -d "$payload" "$SLACK_WEBHOOK_URL" || true
+          fi
+          if [ -n "${LARK_WEBHOOK_URL:-}" ]; then
+            payload=$(jq -n --arg msg "[AI Support] Release published: ${tag_name}\n${release_url}\n\nRun Metrics:\n${summary_lines}" '{msg_type:"text", content:{text:$msg}}')
+            curl -fsSL -H 'Content-Type: application/json' -d "$payload" "$LARK_WEBHOOK_URL" || true
+          fi
 
       - name: Print release info
         if: always()
