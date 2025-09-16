@@ -15,6 +15,10 @@ on:
         description: "Optional: release name (defaults to auto-generated)"
         required: false
         type: string
+      force:
+        description: "Force update release body even if content hash unchanged"
+        required: false
+        type: boolean
   workflow_run:
     workflows: ["Backup & Restore Qdrant"]
     types:
@@ -199,6 +203,7 @@ jobs:
         id: notes
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
         run: |
           set -euo pipefail
           run_id="${{ steps.resolve_run.outputs.run_id }}"
@@ -283,6 +288,37 @@ jobs:
               echo '```';
             } >> "$out_dir/RELEASE_NOTES.md"
           fi
+          # Append Key Signals section (quick glance)
+          if [ -f "$out_dir/ci_summary.txt" ]; then
+            ks_file="$out_dir/_key_signals.txt"
+            cs="$out_dir/ci_summary.txt"
+            ask_rate=$(grep -E '^- success_rate:' "$cs" | head -n1 | sed -E 's/^- success_rate: *//') || true
+            llm_p95=$(grep -E '^- LLM generate p95:' "$cs" | head -n1 | sed -E 's/.*: *([0-9.]+) s.*/\1 s/') || true
+            rag_p95=$(grep -E '^- RAG retrieval p95:' "$cs" | head -n1 | sed -E 's/.*: *([0-9.]+) s.*/\1 s/') || true
+            llm_samples=$(grep -E '^- LLM samples:' "$cs" | head -n1 | sed -E 's/^- LLM samples: *//') || true
+            rag_samples=$(grep -E '^- RAG samples:' "$cs" | head -n1 | sed -E 's/^- RAG samples: *//') || true
+            # from API Success (extra) block
+            upsert_rate=$(awk '
+              $0 ~ /^- endpoint: \/embedding\/upsert$/ {flag=1; next}
+              flag && $0 ~ /success_rate:/ { gsub(/^.*success_rate: /, ""); print; flag=0 }
+            ' "$cs" | head -n1) || true
+            preflight_rate=$(awk '
+              $0 ~ /^- endpoint: \/api\/v1\/rag\/preflight$/ {flag=1; next}
+              flag && $0 ~ /success_rate:/ { gsub(/^.*success_rate: /, ""); print; flag=0 }
+            ' "$cs" | head -n1) || true
+            {
+              echo;
+              echo "## Key Signals";
+              echo;
+              [ -n "$ask_rate" ] && echo "- /api/v1/ask success: $ask_rate" || true
+              [ -n "$preflight_rate" ] && echo "- /api/v1/rag/preflight success: $preflight_rate" || true
+              [ -n "$upsert_rate" ] && echo "- /embedding/upsert success: $upsert_rate" || true
+              [ -n "$llm_p95" ] && echo "- LLM p95: $llm_p95" || true
+              [ -n "$rag_p95" ] && echo "- RAG p95: $rag_p95" || true
+              [ -n "$llm_samples" ] && echo "- LLM samples: $llm_samples" || true
+              [ -n "$rag_samples" ] && echo "- RAG samples: $rag_samples" || true
+            } >> "$out_dir/RELEASE_NOTES.md"
+          fi
           # Append Run Links (metrics-e2e latest success, backup-restore source, this release)
           {
             echo;
@@ -309,9 +345,23 @@ jobs:
               fi
             fi
           } >> "$out_dir/RELEASE_NOTES.md"
+          # Decide if release notes changed compared to existing release body (after all sections appended)
+          notes_hash=$(shasum -a 256 "$out_dir/RELEASE_NOTES.md" | awk '{print $1}')
+          changed="true"
+          tmp_rel="$out_dir/_existing_release.json"
+          if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG_NAME}" -o "$tmp_rel"; then
+            body=$(jq -r '.body // ""' "$tmp_rel")
+            old_hash=$(printf "%s" "$body" | shasum -a 256 | awk '{print $1}')
+            if [ "$old_hash" = "$notes_hash" ]; then
+              changed="false"
+            fi
+          fi
           echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Create or Update GitHub Release (only if changed/new or forced)
+        if: steps.notes.outputs.changed == 'true' || inputs.force == true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
@@ -329,21 +379,89 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+          # Default thresholds (main)
+          WARN_API_SUCCESS_MIN: "98"   # percent threshold for warning
+          WARN_LLM_P95_MAX: "1.8"      # seconds
+          WARN_RAG_P95_MAX: "0.9"      # seconds
+          # Branch name resolved from trigger (workflow_run or workflow_dispatch)
+          BRANCH_NAME: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         run: |
           set -euo pipefail
+          # Adjust thresholds by branch patterns
+          case "${BRANCH_NAME:-}" in
+            release/*)
+              WARN_API_SUCCESS_MIN="99"; WARN_LLM_P95_MAX="1.5"; WARN_RAG_P95_MAX="0.8" ;;
+            main|master)
+              WARN_API_SUCCESS_MIN="98"; WARN_LLM_P95_MAX="1.8"; WARN_RAG_P95_MAX="0.9" ;;
+            dev|develop|staging)
+              WARN_API_SUCCESS_MIN="95"; WARN_LLM_P95_MAX="2.2"; WARN_RAG_P95_MAX="1.2" ;;
+            feature/*|feat/*)
+              WARN_API_SUCCESS_MIN="95"; WARN_LLM_P95_MAX="2.5"; WARN_RAG_P95_MAX="1.5" ;;
+            *)
+              WARN_API_SUCCESS_MIN="98"; WARN_LLM_P95_MAX="1.8"; WARN_RAG_P95_MAX="0.9" ;;
+          esac
           run_id="${{ steps.resolve_run.outputs.run_id }}"
           tag_name="${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}"
           release_url="https://github.com/${{ github.repository }}/releases/tag/${tag_name}"
           notes_path='${{ steps.notes.outputs.notes_path }}'
           # Extract a few metrics lines to include in notification
-          summary_lines=$(sed -n '/^## Run Metrics$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
+          run_metrics=$(sed -n '/^## Run Metrics$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
+          ci_summary=$(sed -n '/^## CI Summary$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 15 || true)
+          key_signals=$(sed -n '/^## Key Signals$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
+          # Evaluate warning flags from CI Summary
+          warn_msgs=()
+          # API success
+          if rate_line=$(printf "%s" "$ci_summary" | grep -E '^- success_rate:' | head -n1); then
+            rate_num=$(printf "%s" "$rate_line" | sed -E 's/.*: ([0-9.]+)%.*/\1/')
+            min_ok=${WARN_API_SUCCESS_MIN}
+            awk -v r="$rate_num" -v m="$min_ok" 'BEGIN{if (r<m) exit 0; else exit 1}' || warn_msgs+=("API success < ${min_ok}%")
+          fi
+          # /embedding/upsert success (from extra APIs section)
+          if up_line=$(printf "%s" "$ci_summary" | awk '
+            $0 ~ /^- endpoint: \/embedding\/upsert$/ {flag=1; next}
+            flag && $0 ~ /success_rate:/ { print; flag=0 }
+          ' | head -n1); then
+            up_rate=$(printf "%s" "$up_line" | sed -E 's/.*success_rate: ([0-9.]+)%.*/\1/')
+            min_ok=${WARN_API_SUCCESS_MIN}
+            awk -v r="$up_rate" -v m="$min_ok" 'BEGIN{if (r<m) exit 0; else exit 1}' || warn_msgs+=("/embedding/upsert success < ${min_ok}%")
+          fi
+          # /api/v1/rag/preflight success
+          if pf_line=$(printf "%s" "$ci_summary" | awk '
+            $0 ~ /^- endpoint: \/api\/v1\/rag\/preflight$/ {flag=1; next}
+            flag && $0 ~ /success_rate:/ { print; flag=0 }
+          ' | head -n1); then
+            pf_rate=$(printf "%s" "$pf_line" | sed -E 's/.*success_rate: ([0-9.]+)%.*/\1/')
+            min_ok=${WARN_API_SUCCESS_MIN}
+            awk -v r="$pf_rate" -v m="$min_ok" 'BEGIN{if (r<m) exit 0; else exit 1}' || warn_msgs+=("/api/v1/rag/preflight success < ${min_ok}%")
+          fi
+          # Latency p95
+          if llm95=$(printf "%s" "$ci_summary" | grep -E 'LLM generate p95' | sed -E 's/.*: ([0-9.]+) s.*/\1/' | head -n1); then
+            awk -v v="$llm95" -v m="$WARN_LLM_P95_MAX" 'BEGIN{if (v>m) exit 0; else exit 1}' || warn_msgs+=("LLM p95 > ${WARN_LLM_P95_MAX}s")
+          fi
+          if rag95=$(printf "%s" "$ci_summary" | grep -E 'RAG retrieval p95' | sed -E 's/.*: ([0-9.]+) s.*/\1/' | head -n1); then
+            awk -v v="$rag95" -v m="$WARN_RAG_P95_MAX" 'BEGIN{if (v>m) exit 0; else exit 1}' || warn_msgs+=("RAG p95 > ${WARN_RAG_P95_MAX}s")
+          fi
+          warn_head=""
+          if [ ${#warn_msgs[@]} -gt 0 ]; then
+            warn_head="⚠️ Warnings: ${warn_msgs[*]}\n\n"
+          fi
+
+          # Decide if we should send notifications: only when warnings present
+          should_notify="false"
+          if [ ${#warn_msgs[@]} -gt 0 ]; then
+            should_notify="true"
+          fi
+          if [ "$should_notify" != "true" ]; then
+            echo "No changes and no warnings; skip notifications."
+            exit 0
+          }
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-            payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\nRun Metrics:\n${summary_lines}" '{text:$text}')
+            payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Key Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{text:$text}')
             curl -fsSL -H 'Content-Type: application/json' -d "$payload" "$SLACK_WEBHOOK_URL" || true
           fi
           if [ -n "${LARK_WEBHOOK_URL:-}" ]; then
-            payload=$(jq -n --arg msg "[AI Support] Release published: ${tag_name}\n${release_url}\n\nRun Metrics:\n${summary_lines}" '{msg_type:"text", content:{text:$msg}}')
+            payload=$(jq -n --arg msg "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Key Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{msg_type:"text", content:{text:$msg}}')
             curl -fsSL -H 'Content-Type: application/json' -d "$payload" "$LARK_WEBHOOK_URL" || true
           fi
 
