@@ -144,31 +144,22 @@ jobs:
           mkdir -p "$extract_dir"
           sudo apt-get update -y
           sudo apt-get install -y jq unzip
+          # Ensure token available for GitHub API requests
+          export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
           echo "Listing zip entries"
           entries=$(unzip -Z1 "$out_dir/${artifact_name}.zip")
           echo "$entries" | sed -n '1,100p'
-          echo "Extracting matched entries deterministically using unzip -p ..."
-          emb_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?embedding_upsert.json$' | head -n1 || true)
-          dump_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?qdrant_.*_dump.json$' | head -n1 || true)
-          ci_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?ci_summary.txt$' | head -n1 || true)
-          e2e_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?metrics_e2e_summary.txt$' | head -n1 || true)
-          emb_path=""
-          dump_path=""
-          if [ -n "$emb_entry" ]; then
-            unzip -p "$out_dir/${artifact_name}.zip" "$emb_entry" > "$out_dir/embedding_upsert.json" || true
-            emb_path="$out_dir/embedding_upsert.json"
-          fi
-          if [ -n "$dump_entry" ]; then
-            unzip -p "$out_dir/${artifact_name}.zip" "$dump_entry" > "$out_dir/qdrant_dump.json" || true
-            dump_path="$out_dir/qdrant_dump.json"
-          fi
-          if [ -n "$ci_entry" ]; then
-            unzip -p "$out_dir/${artifact_name}.zip" "$ci_entry" > "$out_dir/ci_summary.txt" || true
-          fi
-          if [ -n "$e2e_entry" ]; then
-            unzip -p "$out_dir/${artifact_name}.zip" "$e2e_entry" > "$out_dir/metrics_e2e_summary.txt" || true
-          fi
-          # If metrics_e2e_summary.txt still missing, fetch from latest successful Metrics E2E run
+          echo "Extracting entire archive to $extract_dir for robust file discovery ..."
+          unzip -o "$out_dir/${artifact_name}.zip" -d "$extract_dir" >/dev/null || true
+          emb_path=$(find "$extract_dir" -type f -name 'embedding_upsert.json' | head -n1 || true)
+          dump_path=$(find "$extract_dir" -type f -regex '.*/qdrant_.*_dump.json' | head -n1 || true)
+          ci_found=$(find "$extract_dir" -type f -name 'ci_summary.txt' | head -n1 || true)
+          e2e_found=$(find "$extract_dir" -type f -name 'metrics_e2e_summary.txt' | head -n1 || true)
+          if [ -n "$emb_path" ]; then cp -f "$emb_path" "$out_dir/embedding_upsert.json" || true; fi
+          if [ -n "$dump_path" ]; then cp -f "$dump_path" "$out_dir/qdrant_dump.json" || true; fi
+          if [ -n "$ci_found" ]; then cp -f "$ci_found" "$out_dir/ci_summary.txt" || true; fi
+          if [ -n "$e2e_found" ]; then cp -f "$e2e_found" "$out_dir/metrics_e2e_summary.txt" || true; fi
+          # If metrics_e2e_summary.txt or api_metrics.prom still missing, fetch from latest successful Metrics E2E run
           # Also try to fetch api_metrics.prom for fallback metric computation
           if [ ! -s "$out_dir/metrics_e2e_summary.txt" ] || [ ! -s "$out_dir/api_metrics.prom" ]; then
             echo "metrics_e2e_summary.txt not found in artifact, fetching from latest Metrics E2E run..."
@@ -216,14 +207,9 @@ jobs:
             [ -z "$dump_path" ] && dump_path=$(find "$extract_dir" -type f -regex '.*/qdrant_.*_dump.json' | head -n1)
           fi
           if [ -z "$emb_path" ] || [ -z "$dump_path" ]; then
-            echo "embedding_upsert.json or qdrant_*_dump.json not found in artifact; writing warning summary and continuing" >&2
-            {
-              echo "artifact scan warning: required files not found in zip";
-              echo "zip: ${artifact_name}.zip";
-              echo "emb_path: $emb_path";
-              echo "dump_path: $dump_path";
-            } > "$out_dir/VALIDATION_SUMMARY.txt"
-            exit 0
+            echo "[WARN] mandatory artifact files missing (embedding_upsert.json or qdrant_*_dump.json)" >&2
+            echo "Extraction tree (top 200 lines):"
+            (cd "$extract_dir" && find . -maxdepth 4 -type f -printf '%p\n' | sed -n '1,200p') || true
           fi
           echo "emb_path=$emb_path"
           echo "dump_path=$dump_path"
@@ -231,6 +217,18 @@ jobs:
           exp_src=$(jq -r '.src' "$emb_path")
           exp_coll=$(jq -r '.collection' "$emb_path")
           echo "Derived expects: total=$exp_total src=$exp_src coll=$exp_coll"
+          # Run validation script to generate a friendly summary; never fail release even if validation fails
+          if [ -n "$emb_path" ] && [ -n "$dump_path" ]; then
+            python3 scripts/validate_backup_artifacts.py \
+              --emb "$emb_path" \
+              --dump "$dump_path" \
+              --expect-total "$exp_total" \
+              --expect-src "$exp_src" \
+              --expect-collection "$exp_coll" \
+              || true
+          else
+            echo "[WARN] Skipping validation due to missing artifact files"
+          fi
           # Run validation script to generate a friendly summary; never fail release even if validation fails
           python3 scripts/validate_backup_artifacts.py \
             --emb "$emb_path" \
@@ -330,8 +328,8 @@ jobs:
               echo '```';
             } >> "$out_dir/RELEASE_NOTES.md"
           fi
-          # Append Key Signals section (quick glance)
-          if [ -f "$out_dir/ci_summary.txt" ] || [ -f "$out_dir/metrics_e2e_summary.txt" ]; then
+          # Append Key Signals section (quick glance) - always attempt; internal logic provides N/A fallback
+          if :; then
             ks_file="$out_dir/_key_signals.txt"
             cs_main="$out_dir/ci_summary.txt"
             cs_alt="$out_dir/metrics_e2e_summary.txt"
@@ -447,6 +445,18 @@ jobs:
               # debug dump (HTML comment)
               echo "<!-- KS_DEBUG ask=$ask_rate pf=$preflight_rate upsert=$upsert_rate llm_p95=$llm_p95 rag_p95=$rag_p95 llm_samples=$llm_samples rag_samples=$rag_samples src_cs=$cs_main alt_cs=$cs_alt has_prom=$( [ -f \"$metrics_prom\" ] && echo 1 || echo 0 ) -->"
             } >> "$out_dir/RELEASE_NOTES.md"
+
+            # Console debug group for CI logs
+            echo "::group::KS DEBUG"
+            echo "ask_rate=$ask_rate"
+            echo "preflight_rate=$preflight_rate"
+            echo "upsert_rate=$upsert_rate"
+            echo "llm_p95=$llm_p95 rag_p95=$rag_p95"
+            echo "llm_samples=$llm_samples rag_samples=$rag_samples"
+            echo "has_metrics_prom=$([ -f "$metrics_prom" ] && echo 1 || echo 0)"
+            echo "-- RELEASE_NOTES.md (first 120 lines) --"
+            sed -n '1,120p' "$out_dir/RELEASE_NOTES.md" || true
+            echo "::endgroup::"
           fi
           # Append Run Links (metrics-e2e latest success, backup-restore source, this release)
           {
