@@ -151,6 +151,7 @@ jobs:
           emb_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?embedding_upsert.json$' | head -n1 || true)
           dump_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?qdrant_.*_dump.json$' | head -n1 || true)
           ci_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?ci_summary.txt$' | head -n1 || true)
+          e2e_entry=$(printf "%s\n" "$entries" | grep -E '^(.*/)?metrics_e2e_summary.txt$' | head -n1 || true)
           emb_path=""
           dump_path=""
           if [ -n "$emb_entry" ]; then
@@ -163,6 +164,47 @@ jobs:
           fi
           if [ -n "$ci_entry" ]; then
             unzip -p "$out_dir/${artifact_name}.zip" "$ci_entry" > "$out_dir/ci_summary.txt" || true
+          fi
+          if [ -n "$e2e_entry" ]; then
+            unzip -p "$out_dir/${artifact_name}.zip" "$e2e_entry" > "$out_dir/metrics_e2e_summary.txt" || true
+          fi
+          # If metrics_e2e_summary.txt still missing, fetch from latest successful Metrics E2E run
+          # Also try to fetch api_metrics.prom for fallback metric computation
+          if [ ! -s "$out_dir/metrics_e2e_summary.txt" ] || [ ! -s "$out_dir/api_metrics.prom" ]; then
+            echo "metrics_e2e_summary.txt not found in artifact, fetching from latest Metrics E2E run..."
+            wf_json="$out_dir/_workflows.json"
+            runs_json="$out_dir/_metrics_e2e_runs.json"
+            arts_json="$out_dir/_metrics_e2e_artifacts.json"
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json" || true
+            wf_id=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json" | head -n1 || true)
+            if [ -n "$wf_id" ]; then
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&per_page=1" -o "$runs_json" || true
+              m_run=$(jq -r '.workflow_runs[0].id // empty' "$runs_json" || true)
+              if [ -n "$m_run" ]; then
+                curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/runs/${m_run}/artifacts" -o "$arts_json" || true
+                art_id=$(jq -r '.artifacts[0].id // empty' "$arts_json" || true)
+                if [ -n "$art_id" ]; then
+                  zip_path="$out_dir/_metrics_e2e_${m_run}.zip"
+                  tmp_ext="$out_dir/_metrics_e2e_extract_${m_run}"
+                  mkdir -p "$tmp_ext"
+                  curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                    -o "$zip_path" \
+                    "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id}/zip" || true
+                  unzip -o "$zip_path" -d "$tmp_ext" >/dev/null || true
+                  found=$(find "$tmp_ext" -type f -name 'metrics_e2e_summary.txt' | head -n1 || true)
+                  if [ -n "$found" ]; then
+                    cp -f "$found" "$out_dir/metrics_e2e_summary.txt" || true
+                  fi
+                  found_api=$(find "$tmp_ext" -type f -name 'api_metrics.prom' | head -n1 || true)
+                  if [ -n "$found_api" ]; then
+                    cp -f "$found_api" "$out_dir/api_metrics.prom" || true
+                  fi
+                fi
+              fi
+            fi
           fi
           # Fallback to filesystem search only if needed
           if [ -z "$emb_path" ] || [ -z "$dump_path" ]; then
@@ -289,23 +331,108 @@ jobs:
             } >> "$out_dir/RELEASE_NOTES.md"
           fi
           # Append Key Signals section (quick glance)
-          if [ -f "$out_dir/ci_summary.txt" ]; then
+          if [ -f "$out_dir/ci_summary.txt" ] || [ -f "$out_dir/metrics_e2e_summary.txt" ]; then
             ks_file="$out_dir/_key_signals.txt"
-            cs="$out_dir/ci_summary.txt"
-            ask_rate=$(grep -E '^- success_rate:' "$cs" | head -n1 | sed -E 's/^- success_rate: *//') || true
-            llm_p95=$(grep -E '^- LLM generate p95:' "$cs" | head -n1 | sed -E 's/.*: *([0-9.]+) s.*/\1 s/') || true
-            rag_p95=$(grep -E '^- RAG retrieval p95:' "$cs" | head -n1 | sed -E 's/.*: *([0-9.]+) s.*/\1 s/') || true
-            llm_samples=$(grep -E '^- LLM samples:' "$cs" | head -n1 | sed -E 's/^- LLM samples: *//') || true
-            rag_samples=$(grep -E '^- RAG samples:' "$cs" | head -n1 | sed -E 's/^- RAG samples: *//') || true
-            # from API Success (extra) block
-            upsert_rate=$(awk '
-              $0 ~ /^- endpoint: \/embedding\/upsert$/ {flag=1; next}
-              flag && $0 ~ /success_rate:/ { gsub(/^.*success_rate: /, ""); print; flag=0 }
-            ' "$cs" | head -n1) || true
-            preflight_rate=$(awk '
-              $0 ~ /^- endpoint: \/api\/v1\/rag\/preflight$/ {flag=1; next}
-              flag && $0 ~ /success_rate:/ { gsub(/^.*success_rate: /, ""); print; flag=0 }
-            ' "$cs" | head -n1) || true
+            cs_main="$out_dir/ci_summary.txt"
+            cs_alt="$out_dir/metrics_e2e_summary.txt"
+            # helper: extract first match from a file by regex, trimming (sed-only for portability)
+            ext() {
+              local file="$1" pat="$2"
+              [ -f "$file" ] || return 1
+              sed -n -E "/${pat}/p" "$file" | head -n1 | sed -E 's/^\s+//;s/\s+$//' || true
+            }
+            # ask success
+            ask_line=$(ext "$cs_main" '^-\s*success_rate:')
+            if [ -z "$ask_line" ]; then ask_line=$(ext "$cs_alt" '^-\s*success_rate:'); fi
+            ask_rate=$(printf "%s" "$ask_line" | sed -E 's/^[^-]*-\s*success_rate:\s*//')
+            # LLM/RAG p95
+            llm_line=$(ext "$cs_main" '^-\s*LLM generate p95:')
+            if [ -z "$llm_line" ]; then llm_line=$(ext "$cs_alt" '^-\s*LLM generate p95:'); fi
+            llm_p95=$(printf "%s" "$llm_line" | sed -E 's/.*:\s*([0-9.]+)\s*s.*/\1 s/')
+            rag_line=$(ext "$cs_main" '^-\s*RAG retrieval p95:')
+            if [ -z "$rag_line" ]; then rag_line=$(ext "$cs_alt" '^-\s*RAG retrieval p95:'); fi
+            rag_p95=$(printf "%s" "$rag_line" | sed -E 's/.*:\s*([0-9.]+)\s*s.*/\1 s/')
+            # samples
+            llm_samples_line=$(ext "$cs_main" '^-\s*LLM samples:')
+            if [ -z "$llm_samples_line" ]; then llm_samples_line=$(ext "$cs_alt" '^-\s*LLM samples:'); fi
+            llm_samples=$(printf "%s" "$llm_samples_line" | sed -E 's/^[^-]*-\s*LLM samples:\s*//')
+            rag_samples_line=$(ext "$cs_main" '^-\s*RAG samples:')
+            if [ -z "$rag_samples_line" ]; then rag_samples_line=$(ext "$cs_alt" '^-\s*RAG samples:'); fi
+            rag_samples=$(printf "%s" "$rag_samples_line" | sed -E 's/^[^-]*-\s*RAG samples:\s*//')
+            # extra endpoints
+            upsert_block=$(ext "$cs_main" '^-\s*endpoint:\s*/embedding/upsert')
+            if [ -z "$upsert_block" ]; then upsert_block=$(ext "$cs_alt" '^-\s*endpoint:\s*/embedding/upsert'); fi
+            upsert_rate=""
+            if [ -n "$upsert_block" ]; then
+              upsert_rate=$(awk 'found{ if ($0 ~ /success_rate:/){sub(/.*success_rate: /,""); print; exit} } $0 ~ /endpoint: \/embedding\/upsert/{found=1}' "$cs_main" 2>/dev/null | head -n1)
+              if [ -z "$upsert_rate" ] && [ -f "$cs_alt" ]; then
+                upsert_rate=$(awk 'found{ if ($0 ~ /success_rate:/){sub(/.*success_rate: /,""); print; exit} } $0 ~ /endpoint: \/embedding\/upsert/{found=1}' "$cs_alt" 2>/dev/null | head -n1)
+              fi
+            fi
+            pf_block=$(ext "$cs_main" '^-\s*endpoint:\s*/api/v1/rag/preflight')
+            if [ -z "$pf_block" ]; then pf_block=$(ext "$cs_alt" '^-\s*endpoint:\s*/api/v1/rag/preflight'); fi
+            preflight_rate=""
+            if [ -n "$pf_block" ]; then
+              preflight_rate=$(awk 'found{ if ($0 ~ /success_rate:/){sub(/.*success_rate: /,""); print; exit} } $0 ~ /endpoint: \/api\/v1\/rag\/preflight/{found=1}' "$cs_main" 2>/dev/null | head -n1)
+              if [ -z "$preflight_rate" ] && [ -f "$cs_alt" ]; then
+                preflight_rate=$(awk 'found{ if ($0 ~ /success_rate:/){sub(/.*success_rate: /,""); print; exit} } $0 ~ /endpoint: \/api\/v1\/rag\/preflight/{found=1}' "$cs_alt" 2>/dev/null | head -n1)
+              fi
+            fi
+            # Fallbacks from Prometheus api_metrics.prom
+            metrics_prom="$out_dir/api_metrics.prom"
+            if [ -f "$metrics_prom" ]; then
+              # helper: success rate for a given path from http_requests_total
+              rate_for_path() {
+                local p="$1"; local f="$2"; local total=0 ok=0
+                # sum all statuses for path
+                while read -r line; do
+                  val=$(printf '%s' "$line" | sed -E 's/.*} *([0-9.]+).*/\1/')
+                  total=$(awk -v a="$total" -v b="$val" 'BEGIN{printf("%f", a+b)}')
+                done < <(grep -E "^http_requests_total\\{[^}]*path=\"$p\"[^}]*\}" "$f" || true)
+                while read -r line; do
+                  val=$(printf '%s' "$line" | sed -E 's/.*} *([0-9.]+).*/\1/')
+                  ok=$(awk -v a="$ok" -v b="$val" 'BEGIN{printf("%f", a+b)}')
+                done < <(grep -E "^http_requests_total\\{[^}]*path=\"$p\"[^}]*status=\"200\"[^}]*\}" "$f" || true)
+                if [ "$total" != "0" ]; then
+                  awk -v a="$ok" -v b="$total" 'BEGIN{printf("%.2f%%", (b>0? (a/b*100.0): 0))}'
+                fi
+              }
+              # helper: p95 for histogram buckets: metric_bucket{le="x"...}
+              p95_for_metric() {
+                local name="$1"; local f="$2"
+                # aggregate counts by le across all label sets
+                awk -v name="$name" '
+                  $0 ~ ("^"name"_bucket\\{") {
+                    match($0, /le=\"([^\"]+)\"/ , m); le=m[1];
+                    val=$NF; if (val+0==val) sum[le]+=val; total+=0
+                  }
+                  $0 ~ ("^"name"_count\\{") { c=$NF; if (c+0==c) total+=c }
+                  END{
+                    target=0.95*total; p=""; acc=0;
+                    # order thresholds numerically, handle +Inf last
+                    for (k in sum) { if (k!="+Inf") keys[++n]=k }
+                    asort(keys)
+                    for (i=1;i<=n;i++){ acc+=sum[keys[i]]; if (acc>=target){ p=keys[i]; break } }
+                    if (p=="" && sum["+Inf"]>0) p="+Inf";
+                    if (p!="") print p;
+                  }' "$f"
+              }
+              [ -z "$ask_rate" ] && ask_rate=$(rate_for_path "/api/v1/ask" "$metrics_prom") || true
+              [ -z "$upsert_rate" ] && upsert_rate=$(rate_for_path "/embedding/upsert" "$metrics_prom") || true
+              [ -z "$preflight_rate" ] && preflight_rate=$(rate_for_path "/api/v1/rag/preflight" "$metrics_prom") || true
+              if [ -z "$llm_p95" ]; then
+                p=$(p95_for_metric "llm_generate_duration_seconds" "$metrics_prom" | head -n1)
+                [ -n "$p" ] && llm_p95="$p s"
+              fi
+              if [ -z "$rag_p95" ]; then
+                p=$(p95_for_metric "rag_retrieval_duration_seconds" "$metrics_prom" | head -n1)
+                [ -n "$p" ] && rag_p95="$p s"
+              fi
+            fi
+            # Hard fallback to ensure section is not empty
+            if [ -z "${ask_rate}${preflight_rate}${upsert_rate}${llm_p95}${rag_p95}${llm_samples}${rag_samples}" ]; then
+              ask_rate="N/A"; preflight_rate="N/A"; upsert_rate="N/A"; llm_p95="N/A"; rag_p95="N/A"; llm_samples="N/A"; rag_samples="N/A"
+            fi
             {
               echo;
               echo "## Key Signals";
@@ -317,6 +444,8 @@ jobs:
               [ -n "$rag_p95" ] && echo "- RAG p95: $rag_p95" || true
               [ -n "$llm_samples" ] && echo "- LLM samples: $llm_samples" || true
               [ -n "$rag_samples" ] && echo "- RAG samples: $rag_samples" || true
+              # debug dump (HTML comment)
+              echo "<!-- KS_DEBUG ask=$ask_rate pf=$preflight_rate upsert=$upsert_rate llm_p95=$llm_p95 rag_p95=$rag_p95 llm_samples=$llm_samples rag_samples=$rag_samples src_cs=$cs_main alt_cs=$cs_alt has_prom=$( [ -f \"$metrics_prom\" ] && echo 1 || echo 0 ) -->"
             } >> "$out_dir/RELEASE_NOTES.md"
           fi
           # Append Run Links (metrics-e2e latest success, backup-restore source, this release)
@@ -446,7 +575,15 @@ jobs:
             warn_head="⚠️ Warnings: ${warn_msgs[*]}\n\n"
           fi
 
-          # Hotfix: always proceed (webhooks may be empty), avoid early-exit branch
+          # Only send notifications when warnings are present
+          should_notify="false"
+          if [ ${#warn_msgs[@]} -gt 0 ]; then
+            should_notify="true"
+          fi
+          if [ "$should_notify" != "true" ]; then
+            echo "No warnings; skip notifications."
+            exit 0
+          fi
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
             payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Key Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{text:$text}')
