@@ -195,3 +195,37 @@ bash scripts/restore_qdrant_collection.sh
   - `embedding_upsert.json`: total=5, src=demo.jsonl, collection=default_collection
   - `qdrant_default_collection_dump.json`: type=list, len=5；sample keys: ['id', 'payload']
 - 结论：新增“Validate artifacts”步骤验证通过；备份与恢复一致性通过，RTO≈0s；工件上传成功。
+
+---
+
+## Release Key Signals 的来源与兜底逻辑
+
+Release 页面中的 `Key Signals` 段由工作流 `/.github/workflows/release-backup.yml` 的“Generate release notes”步骤生成。其数据来源与兜底顺序如下：
+
+1) 主来源：`$out_dir/ci_summary.txt`
+- 优先从 CI 汇总文本中提取：
+  - `- success_rate:`（/api/v1/ask 的成功率）
+  - `- endpoint: /api/v1/rag/preflight` 块中的 `success_rate:`
+  - `- endpoint: /embedding/upsert` 块中的 `success_rate:`
+  - `LLM generate p95` 与 `RAG retrieval p95`
+
+2) 备选来源：`$out_dir/metrics_e2e_summary.txt`
+- 当主来源缺失时，从 Metrics E2E 的 summary 文本提取相同字段。
+
+3) Prom 兜底：`$out_dir/api_metrics.prom`
+- 当文本类来源不足以给出数值时，基于 Prometheus 导出的快照 `api_metrics.prom` 计算：
+  - `/api/v1/ask`、`/api/v1/rag/preflight`、`/embedding/upsert` 成功率：按 `http_requests_total{path="..."}` 和 `http_requests_total{path="...",status="200"}` 聚合计算。
+  - `llm_generate_duration_seconds` 与 `rag_retrieval_duration_seconds` 的 p95：按 `_bucket{le="..."}` 累积求 95 分位。
+
+4) 工件获取与最终兜底
+- 若 `$out_dir/metrics_e2e_summary.txt` 或 `$out_dir/api_metrics.prom` 缺失：
+  - 主动拉取最近一次成功的 Metrics E2E 工件（优先同分支 `GITHUB_REF_NAME`；否则退化为全局最新成功），并解压复制 `metrics_e2e_summary.txt` 与 `api_metrics.prom` 到 `$out_dir/`。
+- 若仍缺 `api_metrics.prom`：
+  - 在 `$out_dir` 树内深度查找并复制任何命中的 `api_metrics.prom`；
+  - 如果没有，则尝试使用 `metrics_probe.prom` 复制为 `$out_dir/api_metrics.prom`。
+
+5) 可观测性
+- 工作流会打印 `-- OUT_DIR LISTING --` 显示 `$out_dir` 顶层文件，便于排查。
+- 在 `RELEASE_NOTES.md` 中嵌入 `<!-- KS_DEBUG ... has_prom=... -->` 注释，同时在日志 `::group::KS DEBUG` 段输出同样信息；当 `$out_dir/api_metrics.prom` 文件存在且非空时，`has_prom` 为 1。
+
+上述机制确保 `Key Signals` 在多数情况下稳定产出；即便 E2E 文本汇总缺失，也可利用 Prom 快照计算出核心指标。
