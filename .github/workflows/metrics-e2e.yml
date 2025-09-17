@@ -67,10 +67,6 @@ jobs:
               echo "GRAFANA_ADMIN_PASSWORD=admin";
             } > .env
           fi
-          # Export a canonical snapshot for downstream release fallback parsing
-          if [ -f "$in" ]; then
-            cp -f "$in" artifacts/metrics/api_metrics.prom || true
-          fi
 
       - name: Tighten ai_support_rag_ask p95 thresholds by branch
         run: |
@@ -499,6 +495,10 @@ jobs:
                 echo "  success_rate: $rate"
               done
             } > "$out_api2"
+          fi
+          # Export a canonical snapshot for downstream release fallback parsing
+          if [ -f "$in" ]; then
+            cp -f "$in" artifacts/metrics/api_metrics.prom || true
           fi
 
       - name: Rate-limit burst (trigger) and assert
