@@ -248,11 +248,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
         run: |
-          set -euo pipefail
+          # Be tolerant to missing optional inputs/artifacts. Never fail this step.
+          set +e
+          set +o pipefail || true
+          trap '' ERR
+          set -o pipefail
           run_id="${{ steps.resolve_run.outputs.run_id }}"
           artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
           out_dir="release_artifacts/${run_id}"
           ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          mkdir -p "$out_dir" || true
+          : > "$out_dir/RELEASE_NOTES.md"
           cat > "$out_dir/RELEASE_NOTES.md" << 'EOF'
           # Backup & Restore Artifacts
 
@@ -492,8 +498,9 @@ jobs:
               changed="false"
             fi
           fi
-          echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          # Always emit outputs so downstream steps can guard properly
+          echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT" || true
+          echo "changed=$changed" >> "$GITHUB_OUTPUT" || true
           # Do not fail this step due to optional content issues
           exit 0
 
@@ -541,6 +548,10 @@ jobs:
           tag_name="${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}"
           release_url="https://github.com/${{ github.repository }}/releases/tag/${tag_name}"
           notes_path='${{ steps.notes.outputs.notes_path }}'
+          if [ -z "$notes_path" ] || [ ! -s "$notes_path" ]; then
+            echo "notes_path is empty or missing; skip notifications."
+            exit 0
+          fi
           # Extract a few metrics lines to include in notification
           run_metrics=$(sed -n '/^## Run Metrics$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
           ci_summary=$(sed -n '/^## CI Summary$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 15 || true)
