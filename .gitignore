@@ -22,3 +22,7 @@ venv/
 .poetry/
 Pipfile.lock
 poetry.lock
+
+# Project artifacts and downloaded CI artifacts
+artifacts/
+download_artifacts/
