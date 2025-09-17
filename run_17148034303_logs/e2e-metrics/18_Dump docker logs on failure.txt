@@ -1,8 +1,0 @@
-﻿2025-08-22T06:36:01.5745348Z ##[group]Run docker ps -a
-2025-08-22T06:36:01.5745952Z [36;1mdocker ps -a[0m
-2025-08-22T06:36:01.5746586Z [36;1mdocker-compose -f docker-compose.yml logs --no-color --tail=200[0m
-2025-08-22T06:36:01.5788559Z shell: /usr/bin/bash -e {0}
-2025-08-22T06:36:01.5789194Z ##[endgroup]
-2025-08-22T06:36:01.6709512Z CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
-2025-08-22T06:36:01.6726090Z /home/runner/work/_temp/c883b112-1962-45cc-9c46-89096d52b081.sh: line 2: docker-compose: command not found
-2025-08-22T06:36:01.6732304Z ##[error]Process completed with exit code 127.

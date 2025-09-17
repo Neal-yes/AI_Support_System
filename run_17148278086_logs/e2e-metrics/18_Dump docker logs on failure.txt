@@ -1,8 +1,0 @@
-﻿2025-08-22T06:49:32.4716469Z ##[group]Run docker ps -a
-2025-08-22T06:49:32.4716847Z [36;1mdocker ps -a[0m
-2025-08-22T06:49:32.4717205Z [36;1mdocker compose -f docker-compose.yml logs --no-color --tail=200[0m
-2025-08-22T06:49:32.4758277Z shell: /usr/bin/bash -e {0}
-2025-08-22T06:49:32.4758564Z ##[endgroup]
-2025-08-22T06:49:32.4963812Z CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
-2025-08-22T06:49:32.6073218Z open /home/runner/work/AI_Support_System/AI_Support_System/docker-compose.yml: no such file or directory
-2025-08-22T06:49:32.6106825Z ##[error]Process completed with exit code 1.
