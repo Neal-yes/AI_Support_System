@@ -519,7 +519,7 @@ jobs:
               [ -n "$llm_samples" ] && echo "- LLM samples: $llm_samples" || true
               [ -n "$rag_samples" ] && echo "- RAG samples: $rag_samples" || true
               # debug dump (HTML comment)
-              echo "<!-- KS_DEBUG ask=$ask_rate pf=$preflight_rate upsert=$upsert_rate llm_p95=$llm_p95 rag_p95=$rag_p95 llm_samples=$llm_samples rag_samples=$rag_samples src_cs=$cs_main alt_cs=$cs_alt has_prom=$( [ -f \"$metrics_prom\" ] && echo 1 || echo 0 ) -->"
+              echo "<!-- KS_DEBUG ask=$ask_rate pf=$preflight_rate upsert=$upsert_rate llm_p95=$llm_p95 rag_p95=$rag_p95 llm_samples=$llm_samples rag_samples=$rag_samples src_cs=$cs_main alt_cs=$cs_alt has_prom=$PROM_READY -->"
             } >> "$out_dir/RELEASE_NOTES.md"
 
             # Console debug group for CI logs
