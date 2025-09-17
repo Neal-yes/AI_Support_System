@@ -200,10 +200,45 @@ jobs:
           test "${{ steps.bk.outputs.bk_total }}" = "${{ steps.rv.outputs.restored_total }}"
 
       - name: Emit consolidated CI summary file
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "${OUT_DIR}"
           ci_file="${OUT_DIR}/ci_summary.txt"
+          e2e_file="${OUT_DIR}/metrics_e2e_summary.txt"
+          # Try to fetch latest successful metrics-e2e artifact and extract metrics_e2e_summary.txt
+          echo "Fetching latest successful Metrics E2E run..."
+          wf_json="${OUT_DIR}/metrics_e2e_workflows.json"
+          runs_json="${OUT_DIR}/metrics_e2e_runs.json"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json"
+          wf_id=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json" | head -n1 || true)
+          if [ -n "$wf_id" ]; then
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&per_page=1" -o "$runs_json"
+            m_run=$(jq -r '.workflow_runs[0].id // empty' "$runs_json" || true)
+            if [ -n "$m_run" ]; then
+              arts_json="${OUT_DIR}/metrics_e2e_artifacts_${m_run}.json"
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/${m_run}/artifacts" -o "$arts_json"
+              art_id=$(jq -r '.artifacts[0].id // empty' "$arts_json" || true)
+              if [ -n "$art_id" ]; then
+                zip_path="${OUT_DIR}/metrics_e2e_${m_run}.zip"
+                curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                  -o "$zip_path" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id}/zip"
+                tmp_ext="${OUT_DIR}/_metrics_e2e_extract_${m_run}"
+                mkdir -p "$tmp_ext"
+                unzip -o "$zip_path" -d "$tmp_ext" >/dev/null || true
+                found=$(find "$tmp_ext" -type f -name 'metrics_e2e_summary.txt' | head -n1 || true)
+                if [ -n "$found" ]; then
+                  cp -f "$found" "$e2e_file"
+                  echo "Imported metrics_e2e_summary.txt from metrics-e2e run ${m_run}"
+                fi
+              fi
+            fi
+          fi
           {
             echo "# Consolidated CI Summary";
             echo;
@@ -215,6 +250,20 @@ jobs:
             echo "- backup_duration_seconds: $(($(date +%s) - ${{ steps.t0.outputs.ts }}))";
             echo "- restore_duration_seconds (RTO): $(($(date +%s) - ${{ steps.t1.outputs.ts }}))";
           } > "$ci_file"
+          # Ensure metrics_e2e_summary exists; external workflows may write into it beforehand.
+          if [ ! -s "$e2e_file" ]; then
+            {
+              echo "# Metrics E2E Summary";
+              echo;
+              echo "(not available in this run)";
+            } > "$e2e_file"
+          fi
+          {
+            echo;
+            echo "# Metrics E2E Summary";
+            echo;
+            sed -n '1,200p' "$e2e_file" || true;
+          } >> "$ci_file"
 
       - name: Validate artifacts
         run: |
@@ -234,6 +283,7 @@ jobs:
             artifacts/metrics/embedding_upsert.json
             artifacts/metrics/qdrant_${{ steps.seed.outputs.coll }}_dump.json
             artifacts/metrics/ci_summary.txt
+            artifacts/metrics/metrics_e2e_summary.txt
           retention-days: 14
 
       - name: Teardown

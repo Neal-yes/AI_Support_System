@@ -1,3 +1,0 @@
-[
- {"id":"35e1aae4-6bd2-45c1-bb04-4767135b2017","payload":{"tag":"faq","text":"如何排查 500 错误?","question":"如何排查 500 错误?","answer":null}}, {"id":"a8370c5b-9d78-4e75-8505-ecae53cbd826","payload":{"tag":"faq","text":"本地 AI 客服系统如何工作?","question":"本地 AI 客服系统如何工作?","answer":null}}, {"id":"aa1f2266-3d46-4d51-9887-7658c83a5d35","payload":{"tag":"faq","text":"如何导入示例数据?","question":"如何导入示例数据?","answer":null}}, {"id":"bfd24f6b-1453-484d-ad9b-024c75def7f4","payload":{"tag":"faq","text":"如何进行 RAG 检索?","question":"如何进行 RAG 检索?","answer":null}}, {"id":"df8b05b5-fbc1-4e66-b708-b52e417644b6","payload":{"tag":"faq","text":"如何查看 Prometheus 指标?","question":"如何查看 Prometheus 指标?","answer":null}}
-]
