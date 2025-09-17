@@ -347,6 +347,56 @@ jobs:
             ks_file="$out_dir/_key_signals.txt"
             cs_main="$out_dir/ci_summary.txt"
             cs_alt="$out_dir/metrics_e2e_summary.txt"
+            # Proactively fetch Metrics E2E artifact here if neither summary nor prom exists in out_dir
+            if [ ! -s "$cs_alt" ] && [ ! -s "$out_dir/api_metrics.prom" ]; then
+              echo "[notes] Fetching latest successful Metrics E2E artifact into out_dir ..." >&2
+              GH_TOKEN_EFF="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+              wf_json_n="$out_dir/_workflows_for_notes.json"
+              runs_json_n="$out_dir/_metrics_e2e_runs_for_notes.json"
+              arts_json_n="$out_dir/_metrics_e2e_artifacts_for_notes.json"
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json_n" || true
+              wf_id_n=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json_n" | head -n1 || true)
+              if [ -n "$wf_id_n" ]; then
+                # Try branch-scoped
+                curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id_n}/runs?status=success&branch=${GITHUB_REF_NAME}&per_page=1" -o "$runs_json_n" || true
+                m_run_n=$(jq -r '.workflow_runs[0].id // empty' "$runs_json_n" || true)
+                if [ -z "$m_run_n" ]; then
+                  # Fallback to unscoped latest success
+                  curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id_n}/runs?status=success&per_page=1" -o "$runs_json_n" || true
+                  m_run_n=$(jq -r '.workflow_runs[0].id // empty' "$runs_json_n" || true)
+                fi
+                if [ -n "$m_run_n" ]; then
+                  curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${{ github.repository }}/actions/runs/${m_run_n}/artifacts" -o "$arts_json_n" || true
+                  art_id_n=$(jq -r '.artifacts[] | select(.name|test("^metrics-artifacts")) | .id' "$arts_json_n" | head -n1 || true)
+                  if [ -z "$art_id_n" ]; then
+                    art_id_n=$(jq -r '.artifacts[0].id // empty' "$arts_json_n" || true)
+                  fi
+                  if [ -n "$art_id_n" ]; then
+                    zip_path_n="$out_dir/_metrics_e2e_${m_run_n}_notes.zip"
+                    tmp_ext_n="$out_dir/_metrics_e2e_extract_${m_run_n}_notes"
+                    mkdir -p "$tmp_ext_n"
+                    curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                      -o "$zip_path_n" \
+                      "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id_n}/zip" || true
+                    unzip -o "$zip_path_n" -d "$tmp_ext_n" >/dev/null || true
+                    found_n=$(find "$tmp_ext_n" -type f -name 'metrics_e2e_summary.txt' | head -n1 || true)
+                    if [ -n "$found_n" ]; then
+                      cp -f "$found_n" "$cs_alt" || true
+                      echo "[notes] copied metrics_e2e_summary.txt from $found_n" >&2
+                    fi
+                    found_api_n=$(find "$tmp_ext_n" -type f -name 'api_metrics.prom' | head -n1 || true)
+                    if [ -n "$found_api_n" ]; then
+                      cp -f "$found_api_n" "$out_dir/api_metrics.prom" || true
+                      echo "[notes] copied api_metrics.prom from $found_api_n" >&2
+                    fi
+                  fi
+                fi
+              fi
+            fi
             # Final fallback: if api_metrics.prom missing under out_dir, try to copy from any extracted E2E dirs
             metrics_prom="$out_dir/api_metrics.prom"
             if [ ! -f "$metrics_prom" ]; then
