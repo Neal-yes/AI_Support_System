@@ -173,13 +173,18 @@ jobs:
               "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json" || true
             wf_id=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json" | head -n1 || true)
             if [ -n "$wf_id" ]; then
+              # Restrict to the same branch to avoid picking an older successful run from another branch without the desired artifacts
               curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&per_page=1" -o "$runs_json" || true
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&branch=${GITHUB_REF_NAME}&per_page=1" -o "$runs_json" || true
               m_run=$(jq -r '.workflow_runs[0].id // empty' "$runs_json" || true)
               if [ -n "$m_run" ]; then
                 curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
                   "https://api.github.com/repos/${{ github.repository }}/actions/runs/${m_run}/artifacts" -o "$arts_json" || true
-                art_id=$(jq -r '.artifacts[0].id // empty' "$arts_json" || true)
+                # Prefer the metrics artifacts uploaded by Metrics E2E job
+                art_id=$(jq -r '.artifacts[] | select(.name|test("^metrics-artifacts")) | .id' "$arts_json" | head -n1 || true)
+                if [ -z "$art_id" ]; then
+                  art_id=$(jq -r '.artifacts[0].id // empty' "$arts_json" || true)
+                fi
                 if [ -n "$art_id" ]; then
                   zip_path="$out_dir/_metrics_e2e_${m_run}.zip"
                   tmp_ext="$out_dir/_metrics_e2e_extract_${m_run}"
@@ -248,11 +253,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
         run: |
-          set -euo pipefail
+          # Be tolerant to missing optional inputs/artifacts. Never fail this step.
+          set +e
+          set +o pipefail || true
+          trap '' ERR
+          set -o pipefail
           run_id="${{ steps.resolve_run.outputs.run_id }}"
           artifact_name="${{ steps.list_artifacts.outputs.artifact_name }}"
           out_dir="release_artifacts/${run_id}"
           ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          mkdir -p "$out_dir" || true
+          : > "$out_dir/RELEASE_NOTES.md"
           cat > "$out_dir/RELEASE_NOTES.md" << 'EOF'
           # Backup & Restore Artifacts
 
@@ -336,6 +347,75 @@ jobs:
             ks_file="$out_dir/_key_signals.txt"
             cs_main="$out_dir/ci_summary.txt"
             cs_alt="$out_dir/metrics_e2e_summary.txt"
+            # Proactively fetch Metrics E2E artifact here if neither summary nor prom exists in out_dir
+            if [ ! -s "$cs_alt" ] && [ ! -s "$out_dir/api_metrics.prom" ]; then
+              echo "[notes] Fetching latest successful Metrics E2E artifact into out_dir ..." >&2
+              GH_TOKEN_EFF="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+              wf_json_n="$out_dir/_workflows_for_notes.json"
+              runs_json_n="$out_dir/_metrics_e2e_runs_for_notes.json"
+              arts_json_n="$out_dir/_metrics_e2e_artifacts_for_notes.json"
+              curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json_n" || true
+              wf_id_n=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json_n" | head -n1 || true)
+              if [ -n "$wf_id_n" ]; then
+                # Try branch-scoped
+                curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id_n}/runs?status=success&branch=${GITHUB_REF_NAME}&per_page=1" -o "$runs_json_n" || true
+                m_run_n=$(jq -r '.workflow_runs[0].id // empty' "$runs_json_n" || true)
+                if [ -z "$m_run_n" ]; then
+                  # Fallback to unscoped latest success
+                  curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id_n}/runs?status=success&per_page=1" -o "$runs_json_n" || true
+                  m_run_n=$(jq -r '.workflow_runs[0].id // empty' "$runs_json_n" || true)
+                fi
+                if [ -n "$m_run_n" ]; then
+                  curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/${{ github.repository }}/actions/runs/${m_run_n}/artifacts" -o "$arts_json_n" || true
+                  art_id_n=$(jq -r '.artifacts[] | select(.name|test("^metrics-artifacts")) | .id' "$arts_json_n" | head -n1 || true)
+                  if [ -z "$art_id_n" ]; then
+                    art_id_n=$(jq -r '.artifacts[0].id // empty' "$arts_json_n" || true)
+                  fi
+                  if [ -n "$art_id_n" ]; then
+                    zip_path_n="$out_dir/_metrics_e2e_${m_run_n}_notes.zip"
+                    tmp_ext_n="$out_dir/_metrics_e2e_extract_${m_run_n}_notes"
+                    mkdir -p "$tmp_ext_n"
+                    curl -fsSL -H "Authorization: Bearer $GH_TOKEN_EFF" -H "Accept: application/vnd.github+json" \
+                      -o "$zip_path_n" \
+                      "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${art_id_n}/zip" || true
+                    unzip -o "$zip_path_n" -d "$tmp_ext_n" >/dev/null || true
+                    found_n=$(find "$tmp_ext_n" -type f -name 'metrics_e2e_summary.txt' | head -n1 || true)
+                    if [ -n "$found_n" ]; then
+                      cp -f "$found_n" "$cs_alt" || true
+                      echo "[notes] copied metrics_e2e_summary.txt from $found_n" >&2
+                    fi
+                    found_api_n=$(find "$tmp_ext_n" -type f -name 'api_metrics.prom' | head -n1 || true)
+                    if [ -n "$found_api_n" ]; then
+                      cp -f "$found_api_n" "$out_dir/api_metrics.prom" || true
+                      echo "[notes] copied api_metrics.prom from $found_api_n" >&2
+                    fi
+                  fi
+                fi
+              fi
+            fi
+            # Final fallback: if api_metrics.prom missing under out_dir, try to copy from any extracted E2E dirs
+            metrics_prom="$out_dir/api_metrics.prom"
+            if [ ! -f "$metrics_prom" ]; then
+              cand=$(find "$out_dir" -maxdepth 6 -type f -name 'api_metrics.prom' | head -n1 || true)
+              if [ -n "$cand" ] && [ -f "$cand" ]; then
+                cp -f "$cand" "$metrics_prom" || true
+                echo "[fallback] copied api_metrics.prom from: $cand" >&2
+              else
+                # Try metrics_probe.prom as ultimate fallback
+                cand_probe=$(find "$out_dir" -maxdepth 6 -type f -name 'metrics_probe.prom' | head -n1 || true)
+                if [ -n "$cand_probe" ] && [ -f "$cand_probe" ]; then
+                  cp -f "$cand_probe" "$metrics_prom" || true
+                  echo "[fallback] copied metrics_probe.prom as api_metrics.prom from: $cand_probe" >&2
+                fi
+              fi
+            fi
+            # Debug: list out_dir content top-level to aid troubleshooting
+            echo "-- OUT_DIR LISTING --" >&2
+            (cd "$out_dir" && ls -la | sed -n '1,120p') >&2 || true
             # helper: extract first match from a file by regex, trimming (sed-only for portability)
             ext() {
               local file="$1" pat="$2"
@@ -492,8 +572,9 @@ jobs:
               changed="false"
             fi
           fi
-          echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          # Always emit outputs so downstream steps can guard properly
+          echo "notes_path=$out_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT" || true
+          echo "changed=$changed" >> "$GITHUB_OUTPUT" || true
           # Do not fail this step due to optional content issues
           exit 0
 
@@ -541,6 +622,10 @@ jobs:
           tag_name="${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}"
           release_url="https://github.com/${{ github.repository }}/releases/tag/${tag_name}"
           notes_path='${{ steps.notes.outputs.notes_path }}'
+          if [ -z "$notes_path" ] || [ ! -s "$notes_path" ]; then
+            echo "notes_path is empty or missing; skip notifications."
+            exit 0
+          fi
           # Extract a few metrics lines to include in notification
           run_metrics=$(sed -n '/^## Run Metrics$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
           ci_summary=$(sed -n '/^## CI Summary$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 15 || true)
