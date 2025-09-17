@@ -1,5 +1,0 @@
-﻿2025-08-22T06:54:39.9285659Z ##[group]Run docker compose -f docker-compose.yml down -v || true
-2025-08-22T06:54:39.9286205Z [36;1mdocker compose -f docker-compose.yml down -v || true[0m
-2025-08-22T06:54:39.9327101Z shell: /usr/bin/bash -e {0}
-2025-08-22T06:54:39.9327386Z ##[endgroup]
-2025-08-22T06:54:39.9950956Z open /home/runner/work/AI_Support_System/AI_Support_System/docker-compose.yml: no such file or directory
