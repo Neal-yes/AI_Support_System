@@ -350,9 +350,17 @@ jobs:
             # Final fallback: if api_metrics.prom missing under out_dir, try to copy from any extracted E2E dirs
             metrics_prom="$out_dir/api_metrics.prom"
             if [ ! -f "$metrics_prom" ]; then
-              cand=$(find "$out_dir" -maxdepth 3 -type f -name 'api_metrics.prom' | head -n1 || true)
+              cand=$(find "$out_dir" -maxdepth 6 -type f -name 'api_metrics.prom' | head -n1 || true)
               if [ -n "$cand" ] && [ -f "$cand" ]; then
                 cp -f "$cand" "$metrics_prom" || true
+                echo "[fallback] copied api_metrics.prom from: $cand" >&2
+              else
+                # Try metrics_probe.prom as ultimate fallback
+                cand_probe=$(find "$out_dir" -maxdepth 6 -type f -name 'metrics_probe.prom' | head -n1 || true)
+                if [ -n "$cand_probe" ] && [ -f "$cand_probe" ]; then
+                  cp -f "$cand_probe" "$metrics_prom" || true
+                  echo "[fallback] copied metrics_probe.prom as api_metrics.prom from: $cand_probe" >&2
+                fi
               fi
             fi
             # Debug: list out_dir content top-level to aid troubleshooting
