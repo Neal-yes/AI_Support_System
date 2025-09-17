@@ -26,3 +26,12 @@ poetry.lock
 # Project artifacts and downloaded CI artifacts
 artifacts/
 download_artifacts/
+
+# Local run logs and exported log archives
+run_*_logs/
+run_*_logs.zip
+e2e-metrics-logs.zip
+metrics_artifacts.zip
+
+# Frontend local platform config (not used for this repo's CI/CD)
+frontend/.netlify/

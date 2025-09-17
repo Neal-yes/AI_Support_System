@@ -7,7 +7,7 @@
         <RouterLink to="/tools">Tools</RouterLink>
         <RouterLink to="/db">DB</RouterLink>
       </nav>
-      <div class="ver" :title="`version: ${appVersion}`">V{{ appVersion }}</div>
+      <div class="ver" :title="`version: ${appVersion}`">{{ appVersion }}</div>
       <div class="health" @mouseenter="showHealth()" @mouseleave="hideHealth()">
         <span class="dot" :data-status="healthStatus"></span>
         <small class="label">{{ healthLabel }}</small>
@@ -39,7 +39,7 @@ const healthOpen = ref(false)
 const healthDetail = ref<any>({ services: {} })
 const { t } = useI18n()
 
-const appVersion: string = (pkg?.version as string) || '0.0.0'
+const appVersion: string = ((import.meta as any).env?.VITE_APP_VERSION as string) || (pkg?.version as string) || '0.0.0'
 
 const healthLabel = computed(() => {
   switch (healthStatus.value) {

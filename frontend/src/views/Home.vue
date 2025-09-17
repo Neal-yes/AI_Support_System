@@ -67,6 +67,14 @@
 import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+// API Base from environment (fallback to current origin)
+const ENV_API_BASE = (import.meta as any).env?.VITE_API_BASE || ''
+function apiUrl(path: string): string {
+  const base = (ENV_API_BASE || window.location.origin).replace(/\/$/, '')
+  if (!path.startsWith('/')) path = '/' + path
+  return base + path
+}
+
 const query = ref('请简要回答（两句话内）')
 const useRag = ref(false)
 const heartbeatMs = ref(2000)
@@ -147,7 +155,7 @@ async function runPreflight() {
   if (q.length < 2) { preflightState.value = 'none'; return }
   preflightLoading.value = true
   try {
-    const resp = await fetch('/api/v1/rag/preflight', {
+    const resp = await fetch(apiUrl('/api/v1/rag/preflight'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: q })
@@ -204,7 +212,7 @@ async function startStream() {
   resetIdleTimer()
 
   try {
-    const resp = await fetch('/api/v1/ask/stream', {
+    const resp = await fetch(apiUrl('/api/v1/ask/stream'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify(body),

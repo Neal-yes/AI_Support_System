@@ -1,1 +1,0 @@
-{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"tools_error_ratio_1m","tenant":"demo","tool_name":"simple","tool_type":"http_get"},"value":[1756277331.691,"0.01819915709324749"]}]}}
