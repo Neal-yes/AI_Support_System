@@ -585,7 +585,6 @@ jobs:
           tag_name: ${{ inputs.tag || format('backup-restore-run-{0}', steps.resolve_run.outputs.run_id) }}
           name: ${{ inputs.name || format('Backup Restore Artifacts (run {0})', steps.resolve_run.outputs.run_id) }}
           body_path: ${{ steps.notes.outputs.notes_path }}
-          allowUpdates: true
           files: |
             ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
             ${{ steps.list_artifacts.outputs.artifact_name && format('release_artifacts/{0}/{1}.zip.sha256', steps.resolve_run.outputs.run_id, steps.list_artifacts.outputs.artifact_name) }}
