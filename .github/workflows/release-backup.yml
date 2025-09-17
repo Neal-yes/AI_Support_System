@@ -519,7 +519,7 @@ jobs:
               [ -n "$llm_samples" ] && echo "- LLM samples: $llm_samples" || true
               [ -n "$rag_samples" ] && echo "- RAG samples: $rag_samples" || true
               # debug dump (HTML comment)
-              echo "<!-- KS_DEBUG ask=$ask_rate pf=$preflight_rate upsert=$upsert_rate llm_p95=$llm_p95 rag_p95=$rag_p95 llm_samples=$llm_samples rag_samples=$rag_samples src_cs=$cs_main alt_cs=$cs_alt has_prom=$PROM_READY -->"
+              echo "<!-- KS_DEBUG ask=$ask_rate pf=$preflight_rate upsert=$upsert_rate llm_p95=$llm_p95 rag_p95=$rag_p95 llm_samples=$llm_samples rag_samples=$rag_samples src_cs=$cs_main alt_cs=$cs_alt has_prom=$( [ -s \"$metrics_prom\" ] && echo 1 || echo 0 ) -->"
             } >> "$out_dir/RELEASE_NOTES.md"
 
             # Console debug group for CI logs
@@ -529,7 +529,7 @@ jobs:
             echo "upsert_rate=$upsert_rate"
             echo "llm_p95=$llm_p95 rag_p95=$rag_p95"
             echo "llm_samples=$llm_samples rag_samples=$rag_samples"
-            echo "has_metrics_prom=$([ -f \"$metrics_prom\" ] && echo 1 || echo 0)"
+            echo "has_metrics_prom=$([ -s \"$metrics_prom\" ] && echo 1 || echo 0)"
             echo "-- RELEASE_NOTES.md (first 120 lines) --"
             sed -n '1,120p' "$out_dir/RELEASE_NOTES.md" || true
             echo "::endgroup::"
