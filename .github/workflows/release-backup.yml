@@ -179,7 +179,11 @@ jobs:
               if [ -n "$m_run" ]; then
                 curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
                   "https://api.github.com/repos/${{ github.repository }}/actions/runs/${m_run}/artifacts" -o "$arts_json" || true
-                art_id=$(jq -r '.artifacts[0].id // empty' "$arts_json" || true)
+                # Prefer the metrics artifacts uploaded by Metrics E2E job
+                art_id=$(jq -r '.artifacts[] | select(.name|test("^metrics-artifacts")) | .id' "$arts_json" | head -n1 || true)
+                if [ -z "$art_id" ]; then
+                  art_id=$(jq -r '.artifacts[0].id // empty' "$arts_json" || true)
+                fi
                 if [ -n "$art_id" ]; then
                   zip_path="$out_dir/_metrics_e2e_${m_run}.zip"
                   tmp_ext="$out_dir/_metrics_e2e_extract_${m_run}"
@@ -342,6 +346,17 @@ jobs:
             ks_file="$out_dir/_key_signals.txt"
             cs_main="$out_dir/ci_summary.txt"
             cs_alt="$out_dir/metrics_e2e_summary.txt"
+            # Final fallback: if api_metrics.prom missing under out_dir, try to copy from any extracted E2E dirs
+            metrics_prom="$out_dir/api_metrics.prom"
+            if [ ! -f "$metrics_prom" ]; then
+              cand=$(find "$out_dir" -maxdepth 3 -type f -name 'api_metrics.prom' | head -n1 || true)
+              if [ -n "$cand" ] && [ -f "$cand" ]; then
+                cp -f "$cand" "$metrics_prom" || true
+              fi
+            fi
+            # Debug: list out_dir content top-level to aid troubleshooting
+            echo "-- OUT_DIR LISTING --" >&2
+            (cd "$out_dir" && ls -la | sed -n '1,120p') >&2 || true
             # helper: extract first match from a file by regex, trimming (sed-only for portability)
             ext() {
               local file="$1" pat="$2"
