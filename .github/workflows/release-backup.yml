@@ -413,6 +413,8 @@ jobs:
                 fi
               fi
             fi
+            # Ensure api_metrics.prom is flushed to disk before checks (reduce race)
+            if [ -f "$metrics_prom" ]; then sync "$metrics_prom" 2>/dev/null || true; sleep 0.3 || true; fi
             # Debug: list out_dir content top-level to aid troubleshooting
             echo "-- OUT_DIR LISTING --" >&2
             (cd "$out_dir" && ls -la | sed -n '1,120p') >&2 || true
@@ -530,6 +532,9 @@ jobs:
             echo "llm_p95=$llm_p95 rag_p95=$rag_p95"
             echo "llm_samples=$llm_samples rag_samples=$rag_samples"
             echo "has_metrics_prom=$([ -s \"$metrics_prom\" ] && echo 1 || echo 0)"
+            sz=$(wc -c < "$metrics_prom" 2>/dev/null || echo 0)
+            echo "metrics_prom_size=$sz"
+            echo "metrics_prom_ls=$(ls -l \"$metrics_prom\" 2>/dev/null || true)"
             echo "-- RELEASE_NOTES.md (first 120 lines) --"
             sed -n '1,120p' "$out_dir/RELEASE_NOTES.md" || true
             echo "::endgroup::"
@@ -551,8 +556,9 @@ jobs:
               "https://api.github.com/repos/${{ github.repository }}/actions/workflows" -o "$wf_json" || true
             wf_id=$(jq -r '.workflows[] | select(.name=="Metrics E2E") | .id' "$wf_json" | head -n1 || true)
             if [ -n "$wf_id" ]; then
+              # Prefer same-branch latest success for link as well (observability parity)
               curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&per_page=1" -o "$runs_json" || true
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${wf_id}/runs?status=success&branch=${GITHUB_REF_NAME}&per_page=1" -o "$runs_json" || true
               m_run=$(jq -r '.workflow_runs[0].id // empty' "$runs_json" || true)
               if [ -n "$m_run" ]; then
                 m_url="https://github.com/${{ github.repository }}/actions/runs/${m_run}"
