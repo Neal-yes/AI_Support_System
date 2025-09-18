@@ -76,6 +76,8 @@ jobs:
           export API_BASE="${API_BASE}"
           export OUT_DIR="${OUT_DIR}"
           export MAX_DOCS="${MAX_DOCS}"
+          # Ensure seeding uses the same collection as backup/restore later
+          export RAG_COLLECTION="${RAG_COLLECTION}"
           bash scripts/ci/prepare_demo_embeddings.sh
 
       - name: Capture seed stats
