@@ -446,6 +446,31 @@ jobs:
             sleep 3
           done
 
+      - name: Pre-pull model in Ollama (smoke)
+        run: |
+          set -euo pipefail
+          # Determine model from .env (OLLAMA_MODEL) or fallback to qwen2.5:7b
+          MODEL_FROM_ENV=$(grep -E '^OLLAMA_MODEL=' .env | head -n1 | cut -d= -f2- || true)
+          PULL_NAME="${MODEL_FROM_ENV:-qwen2.5:7b}"
+          echo "[CI][smoke] Pre-pull model in Ollama: ${PULL_NAME}"
+          set +e
+          curl -fsS -X POST http://localhost:11434/api/pull \
+            -H 'Content-Type: application/json' \
+            -d "{\"name\": \"${PULL_NAME}\"}" || true
+          echo "[CI][smoke] Waiting for model tag to appear: ${PULL_NAME}"
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:11434/api/tags | jq -e --arg m "${PULL_NAME}" '.models[].model == $m' >/dev/null 2>&1; then
+              echo "[CI][smoke] Model available: ${PULL_NAME}"
+              ok=1; break
+            fi
+            sleep 5
+          done
+          set -e
+          if [ "$ok" != "1" ]; then
+            echo "[CI][smoke] Model ${PULL_NAME} not ready in time; proceeding but smoke may fail" >&2
+          fi
+
       - name: Prepare RAG demo embeddings
         env:
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
