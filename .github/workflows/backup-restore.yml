@@ -122,6 +122,15 @@ jobs:
           echo "Using detected collection: $best (count=$best_cnt)"
           echo "coll=$best" >> $GITHUB_OUTPUT
 
+      - name: Compute restored collection name
+        id: setcoll
+        run: |
+          set -euo pipefail
+          src="${{ steps.detect.outputs.coll }}"
+          restored="${src}__restored"
+          echo "src=$src" >> $GITHUB_OUTPUT
+          echo "restored=$restored" >> $GITHUB_OUTPUT
+
       - name: Echo chosen collections
         run: |
           echo "seed.coll=${{ steps.seed.outputs.coll }}"
@@ -131,7 +140,7 @@ jobs:
         id: t0
         run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
-      - name: Backup Qdrant collection
+      - name: Backup source collection
         run: |
           set -euxo pipefail
           export QDRANT_HTTP="${QDRANT_HTTP}"
@@ -139,7 +148,7 @@ jobs:
           export OUT_DIR="${OUT_DIR}"
           bash scripts/ci/backup_qdrant_collection.sh
 
-      - name: Backup stats
+      - name: Backup stats (source)
         id: bk
         run: |
           set -euo pipefail
@@ -148,21 +157,18 @@ jobs:
           bk_total=$(jq 'length' "$dump")
           echo "bk_total=$bk_total" >> $GITHUB_OUTPUT
 
-      - name: Drop collection
+      - name: Skip dropping source collection
         run: |
-          set -euxo pipefail
-          curl -fsS -X DELETE "${QDRANT_HTTP}/collections/${{ steps.detect.outputs.coll }}" || true
-          # verify deleted by listing collections
-          curl -fsS "${QDRANT_HTTP}/collections" | jq -e '.result.collections | map(.name) | index("${{ steps.detect.outputs.coll }}") | not' >/dev/null
+          echo "Skipping drop of source collection: ${{ steps.detect.outputs.coll }}"
 
       - name: Restore start timestamp
         id: t1
         run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
-      - name: Ensure target collection exists (Qdrant create)
+      - name: Ensure target restored collection exists (Qdrant create)
         run: |
           set -euo pipefail
-          coll="${{ steps.detect.outputs.coll }}"
+          coll="${{ steps.setcoll.outputs.restored }}"
           echo "Ensuring collection exists: ${coll}"
           # If exists, skip
           if curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
@@ -192,11 +198,11 @@ jobs:
           fi
           echo "Collection ${coll} ensured (http=$http)"
 
-      - name: Warmup embedding model
+      - name: Warmup embedding model (restored)
         run: |
           set -euo pipefail
           # 注意：预热写入临时集合，避免污染目标集合计数
-          body='{"texts":["warmup"],"payloads":[{}],"collection":"'"${{ steps.detect.outputs.coll }}__warmup"'"}'
+          body='{"texts":["warmup"],"payloads":[{}],"collection":"'"${{ steps.setcoll.outputs.restored }}__warmup"'"}'
           # best-effort warmup, ignore non-200 to not fail pipeline here
           curl -sS -o /tmp/warmup.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$body" "${API_BASE}/embedding/upsert" || true
 
@@ -204,7 +210,7 @@ jobs:
         run: |
           set -euxo pipefail
           export API_BASE="${API_BASE}"
-          export RAG_COLLECTION="${{ steps.detect.outputs.coll }}"
+          export RAG_COLLECTION="${{ steps.setcoll.outputs.restored }}"
           export OUT_DIR="${OUT_DIR}"
           export SRC_DUMP="${OUT_DIR}/qdrant_${{ steps.detect.outputs.coll }}_dump.json"
           export BATCH_SIZE="${BATCH_SIZE}"
@@ -223,11 +229,11 @@ jobs:
             exit 1
           fi
 
-      - name: Post-restore verify exists and count
+      - name: Post-restore verify exists and count (restored)
         id: rv0
         run: |
           set -euo pipefail
-          coll="${{ steps.detect.outputs.coll }}"
+          coll="${{ steps.setcoll.outputs.restored }}"
           echo "Post-restore verifying collection exists: ${coll}"
           if ! curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
             echo "Collection ${coll} not found after restore. backup_total=${{ steps.bk.outputs.bk_total }}" >&2
@@ -245,13 +251,13 @@ jobs:
           echo "restored_total_pre_scroll=${cnt}" >> $GITHUB_OUTPUT
           echo "Post-restore count: ${cnt}"
 
-      - name: Verify restored count via scroll
+      - name: Verify restored count via exact count (restored)
         id: rv
         run: |
           set -euo pipefail
           echo "Qdrant collections:"
           curl -fsS "${QDRANT_HTTP}/collections" | jq -c '.' || true
-          coll="${{ steps.detect.outputs.coll }}"
+          coll="${{ steps.setcoll.outputs.restored }}"
           echo "Verifying restored collection via exact count: ${coll}"
           # Existence guard
           if ! curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
@@ -282,7 +288,8 @@ jobs:
           {
             echo "# Backup & Restore Summary"
             echo
-            echo "- collection: ${{ steps.seed.outputs.coll }}"
+            echo "- source_collection: ${{ steps.detect.outputs.coll }}"
+            echo "- restored_collection: ${{ steps.setcoll.outputs.restored }}"
             echo "- seed_total: ${{ steps.seed.outputs.total }}"
             echo "- backup_total: ${{ steps.bk.outputs.bk_total }}"
             echo "- restored_total: ${{ steps.rv.outputs.restored_total }}"
