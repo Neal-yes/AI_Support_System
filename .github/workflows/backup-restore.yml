@@ -190,6 +190,28 @@ jobs:
             exit 1
           fi
 
+      - name: Post-restore verify exists and count
+        id: rv0
+        run: |
+          set -euo pipefail
+          coll="${{ steps.detect.outputs.coll }}"
+          echo "Post-restore verifying collection exists: ${coll}"
+          if ! curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
+            echo "Collection ${coll} not found after restore. backup_total=${{ steps.bk.outputs.bk_total }}" >&2
+            if [ "${{ steps.bk.outputs.bk_total }}" != "0" ]; then
+              exit 1
+            else
+              echo "restored_total=0" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+          # Query exact count
+          cnt=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"exact":true}' \
+            "${QDRANT_HTTP}/collections/${coll}/points/count" | jq -r '.result.count // 0')
+          echo "restored_total_pre_scroll=${cnt}" >> $GITHUB_OUTPUT
+          echo "Post-restore count: ${cnt}"
+
       - name: Verify restored count via scroll
         id: rv
         run: |
