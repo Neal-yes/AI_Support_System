@@ -159,6 +159,39 @@ jobs:
         id: t1
         run: echo "ts=$(date +%s)" >> $GITHUB_OUTPUT
 
+      - name: Ensure target collection exists (Qdrant create)
+        run: |
+          set -euo pipefail
+          coll="${{ steps.detect.outputs.coll }}"
+          echo "Ensuring collection exists: ${coll}"
+          # If exists, skip
+          if curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
+            echo "Collection ${coll} already exists; skipping create"
+            exit 0
+          fi
+          # Probe embedding dimension via /embedding/embed warmup
+          http=$(curl -sS -o /tmp/embed_probe.json -w "%{http_code}" -H 'Content-Type: application/json' \
+            -d '{"texts":["probe"]}' "${API_BASE}/embedding/embed")
+          if [ "$http" != "200" ]; then
+            echo "Embed probe failed with http=$http; defaulting dim=1536" >&2
+            dim=1536
+          else
+            dim=$( (jq -r '.dimension // 1536' /tmp/embed_probe.json 2>/dev/null) || echo 1536 )
+            if ! echo "$dim" | grep -Eq '^[0-9]+$'; then dim=1536; fi
+          fi
+          echo "Using embedding dimension: $dim"
+          # Create collection with cosine distance
+          create_body=$(jq -n --argjson size "$dim" '{vectors: {size: $size, distance: "Cosine"}}')
+          # Try create; ignore 409 Conflict
+          http=$(curl -sS -o /tmp/create_resp.json -w "%{http_code}" -X PUT -H 'Content-Type: application/json' \
+            -d "$create_body" "${QDRANT_HTTP}/collections/${coll}")
+          if [ "$http" != "200" ] && [ "$http" != "202" ] && [ "$http" != "409" ]; then
+            echo "Create collection failed http=$http" >&2
+            sed -n '1,160p' /tmp/create_resp.json >&2 || true
+            exit 1
+          fi
+          echo "Collection ${coll} ensured (http=$http)"
+
       - name: Warmup embedding model
         run: |
           set -euo pipefail
@@ -216,36 +249,25 @@ jobs:
         id: rv
         run: |
           set -euo pipefail
-          # count points by paging
           echo "Qdrant collections:"
           curl -fsS "${QDRANT_HTTP}/collections" | jq -c '.' || true
           coll="${{ steps.detect.outputs.coll }}"
-          echo "Verifying restored collection: ${coll}"
-          # Guard: ensure collection exists before scroll
+          echo "Verifying restored collection via exact count: ${coll}"
+          # Existence guard
           if ! curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
-            # If backup had 0 items, absence of collection is acceptable; report restored_total=0
             if [ "${{ steps.bk.outputs.bk_total }}" = "0" ]; then
               echo "Collection ${coll} not found but backup_total=0; treating restored_total as 0" >&2
               echo "restored_total=0" >> $GITHUB_OUTPUT
               exit 0
             fi
-            echo "Collection ${coll} does not exist before scroll and backup_total>0. Aborting." >&2
+            echo "Collection ${coll} does not exist before count and backup_total>0. Aborting." >&2
             exit 1
           fi
-          next="null"
-          total=0
-          while :; do
-            body=$(jq -n --argjson lim 512 --argjson next "$next" '{limit:$lim, with_payload:false, with_vectors:false} + (if $next==null then {} else {offset:$next} end)')
-            resp=$(curl -sS -X POST -H 'Content-Type: application/json' -d "$body" "${QDRANT_HTTP}/collections/${coll}/points/scroll")
-            status=$(echo "$resp" | jq -r '.status')
-            if [ "$status" != "ok" ]; then echo "scroll failed: $resp" >&2; exit 1; fi
-            cnt=$(echo "$resp" | jq '.result.points | length')
-            total=$(( total + cnt ))
-            next=$(echo "$resp" | jq -c '.result.next_page_offset')
-            has_next=$(echo "$resp" | jq '.result.next_page_offset != null')
-            if [ "$has_next" != "true" ]; then break; fi
-          done
-          echo "restored_total=$total" >> $GITHUB_OUTPUT
+          # Use points/count exact to compute restored_total
+          total=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"exact":true}' \
+            "${QDRANT_HTTP}/collections/${coll}/points/count" | jq -r '.result.count // 0')
+          echo "restored_total=${total}" >> $GITHUB_OUTPUT
 
       - name: Compute durations and report
         run: |
