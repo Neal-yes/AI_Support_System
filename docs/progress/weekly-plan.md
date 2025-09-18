@@ -8,7 +8,7 @@
 
 ## W1（本周）：M1 必需项收口与自动化可视化落地
 - 【CI/可视化】新增进度工作流与工件
-  - 产出：`.github/workflows/progress.yml`、`scripts/gen_progress_report.py`、`artifacts/progress/*`
+  - 产出：`.github/workflows/progress.yml`、`scripts/ci/gen_progress_report.py`、`artifacts/progress/*`
   - 验收：PR 合并后自动产出雷达图、kanban.md、summary.json 并上传。
 - 【前端】版本号一致性（Vx.y.z 固定展示）
   - 产出：`frontend` 全局头部展示版本；从 package.json / env 注入；补充单测/E2E 快照。

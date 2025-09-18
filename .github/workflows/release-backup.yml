@@ -227,7 +227,7 @@ jobs:
           echo "Derived expects: total=$exp_total src=$exp_src coll=$exp_coll"
           # Run validation script to generate a friendly summary; never fail release even if validation fails
           if [ -n "$emb_path" ] && [ -n "$dump_path" ]; then
-            python3 scripts/validate_backup_artifacts.py \
+            python3 scripts/ci/validate_backup_artifacts.py \
               --emb "$emb_path" \
               --dump "$dump_path" \
               --expect-total "$exp_total" \
@@ -238,7 +238,7 @@ jobs:
             echo "[WARN] Skipping validation due to missing artifact files"
           fi
           # Run validation script to generate a friendly summary; never fail release even if validation fails
-          python3 scripts/validate_backup_artifacts.py \
+          python3 scripts/ci/validate_backup_artifacts.py \
             --emb "$emb_path" \
             --dump "$dump_path" \
             --expect-total "$exp_total" \

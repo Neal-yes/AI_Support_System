@@ -14,14 +14,14 @@
 
 ## 备份方案
 - 对象：Qdrant 集合（含向量与 payload）、关键配置与评测工件。
-- 工具/脚本：`scripts/backup_qdrant_collection.sh`
+- 工具/脚本：`scripts/ci/backup_qdrant_collection.sh`
 - 建议频率：每小时一次；保留最近 N（默认 24）份。
 
 ### 手动备份
 ```bash
 # 必要环境：QDRANT_URL（默认 http://localhost:6333）、COLLECTION
 export COLLECTION=metrics_demo_1d
-bash scripts/backup_qdrant_collection.sh
+bash scripts/ci/backup_qdrant_collection.sh
 ```
 
 ### 产物位置
@@ -90,7 +90,7 @@ bash scripts/backup_qdrant_collection.sh
 
 1) 备份（小样本）
 - 产物：`artifacts/metrics/qdrant_demo_768_dump.json`（约 3.4K）
-- 方法：`scripts/backup_qdrant_collection.sh`，设置了 curl 超时与 MAX_BATCHES 保护（参见脚本注释）
+- 方法：`scripts/ci/backup_qdrant_collection.sh`，设置了 curl 超时与 MAX_BATCHES 保护（参见脚本注释）
 
 2) 恢复至临时集合（隔离验证）
 - 先显式创建集合（避免依赖后端自动建表）：
@@ -107,7 +107,7 @@ export RAG_COLLECTION=demo_768_tmp
 export SRC_DUMP=artifacts/metrics/qdrant_demo_768_dump.json
 export BATCH_SIZE=32
 
-bash scripts/restore_qdrant_collection.sh
+bash scripts/ci/restore_qdrant_collection.sh
 ```
 - 关键输出（摘要）：
 ```

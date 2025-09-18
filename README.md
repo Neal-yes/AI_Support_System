@@ -86,7 +86,7 @@ gh run download 17724192239 -R Neal-yes/AI_Support_System \
   -n backup-restore-17724192239-1 -D download_artifacts/17724192239
 
 # 本地验证（可选，工作流内已验证）
-python3 scripts/validate_backup_artifacts.py \
+python3 scripts/ci/validate_backup_artifacts.py \
   --emb download_artifacts/17724192239/artifacts/metrics/embedding_upsert.json \
   --dump download_artifacts/17724192239/artifacts/metrics/qdrant_default_collection_dump.json \
   --expect-total 5 --expect-src demo.jsonl --expect-collection default_collection
@@ -745,7 +745,7 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
       python -m pip install -r requirements.txt
 
       # 批量将 JSONL 写入向量库（需包含 text 字段，或按你的结构转换生成 text）
-      python scripts/batch_reupsert.py \
+      python scripts/tools/batch_reupsert.py \
         --input demo.jsonl \
         --collection demo_768 \
         --base-url http://127.0.0.1:8000 \
@@ -768,7 +768,7 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
     - 使用 Shell 脚本（便捷初始化 Demo 集合，内置回退与预热）：
       ```bash
       # 变量：API_BASE / RAG_COLLECTION / RAG_MODEL / SRC_JSONL / BATCH_SIZE / MAX_DOCS / OUT_DIR
-      API_BASE=http://127.0.0.1:8000 RAG_COLLECTION=demo_768 bash scripts/prepare_demo_embeddings.sh
+      API_BASE=http://127.0.0.1:8000 RAG_COLLECTION=demo_768 bash scripts/ci/prepare_demo_embeddings.sh
       ```
       - 行为说明：
         - 等待 `/-/ready` 与嵌入模型预热（避免冷启动 500）。
@@ -1086,7 +1086,7 @@ data: [DONE]
 
     - 【Smoke（plain + RAG）】
       ```bash
-      bash scripts/smoke_ask.sh
+      bash scripts/ci/smoke_ask.sh
       ```
 
     - 【RAG 门禁（严格样本量可选）】
@@ -1094,7 +1094,7 @@ data: [DONE]
       # 严格样本量策略示例（min=10 且必须满足）
       GATE_MIN_TOTAL=10 GATE_REQUIRE_MIN_TOTAL=1 \
       RAG_EVAL_QUERIES=demo.jsonl RAG_TOP_K=5 \
-      bash scripts/rag_eval_gate.sh
+      bash scripts/ci/rag_eval_gate.sh
       ```
 
     - 【触发合成错误（404）并验证指标】
@@ -1389,7 +1389,7 @@ receivers:
 
 ## 备份与恢复演练（Qdrant 集合）
 
-- 脚本位置：`scripts/backup_qdrant_collection.sh` 与 `scripts/restore_qdrant_collection.sh`
+- 脚本位置：`scripts/ci/backup_qdrant_collection.sh` 与 `scripts/ci/restore_qdrant_collection.sh`
 - 说明：备份导出集合点的 payload（含文本）；恢复时会基于 `payload.text` 重新生成向量并写回集合。
 
 ### 一键备份
@@ -1397,7 +1397,7 @@ receivers:
 ```bash
 # 默认集合：default_collection；可通过环境变量覆盖
 export RAG_COLLECTION=default_collection
-bash scripts/backup_qdrant_collection.sh
+bash scripts/ci/backup_qdrant_collection.sh
 ls -lh artifacts/metrics/qdrant_backup_${RAG_COLLECTION}.json
 ```
 
@@ -1407,7 +1407,7 @@ ls -lh artifacts/metrics/qdrant_backup_${RAG_COLLECTION}.json
 # 从备份 JSON 重建向量并 upsert 到集合（可恢复到新集合名以演练）
 export RAG_COLLECTION=default_collection_restored
 export BACKUP_JSON=artifacts/metrics/qdrant_backup_default_collection.json
-bash scripts/restore_qdrant_collection.sh
+bash scripts/ci/restore_qdrant_collection.sh
 ```
 
 ### 验证建议
@@ -1448,7 +1448,7 @@ curl -s http://localhost:8000/embedding/search \
 
 ### 门禁（RAG 评测）
 
-- 脚本：`scripts/rag_eval_gate.sh`，调用 `POST /chat/rag_eval` 计算命中率与平均 top1 分数。
+- 脚本：`scripts/ci/rag_eval_gate.sh`，调用 `POST /chat/rag_eval` 计算命中率与平均 top1 分数。
 - 本地使用示例：
 ```bash
 export RAG_EVAL_QUERIES=demo_faq.jsonl
@@ -1456,7 +1456,7 @@ export RAG_TOP_K=5
 export RAG_MODEL=llama3.2:1b-instruct
 export GATE_HIT_RATIO_MIN=0.60
 export GATE_AVG_TOP1_MIN=0.30
-bash scripts/rag_eval_gate.sh
+bash scripts/ci/rag_eval_gate.sh
 ```
  - CI 集成：见 `.github/workflows/metrics-e2e.yml` 中“RAG eval gate (pre-deploy)”步骤。
 
@@ -1485,11 +1485,11 @@ bash scripts/rag_eval_gate.sh
 
 ### 冒烟（Ask 接口）
 
-- 脚本：`scripts/smoke_ask.sh`，验证 Plain 与 RAG 两种路径。
+- 脚本：`scripts/ci/smoke_ask.sh`，验证 Plain 与 RAG 两种路径。
 - 本地使用：
 ```bash
 export MODEL=llama3.2:1b-instruct
-bash scripts/smoke_ask.sh
+bash scripts/ci/smoke_ask.sh
 ```
 
 ## CORS 配置

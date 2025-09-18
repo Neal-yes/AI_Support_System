@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -148,7 +149,7 @@ jobs:
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           echo "[CI] Preparing demo embeddings for RAG"
-          bash scripts/prepare_demo_embeddings.sh
+          bash scripts/ci/prepare_demo_embeddings.sh
 
       - name: Smoke ask (plain + RAG)
         if: false
@@ -156,7 +157,7 @@ jobs:
           COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           echo "[CI] Smoke will use MODEL=${MODEL:-<unset>} COLLECTION=${COLLECTION:-<unset>}"
-          bash scripts/smoke_ask.sh
+          bash scripts/ci/smoke_ask.sh
 
       - name: Assert Smoke PASS
         if: false
@@ -188,7 +189,7 @@ jobs:
           # 关键：将隔离集合名传入 RAG gate，避免 fallback 到默认集合
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
-          bash scripts/rag_eval_gate.sh
+          bash scripts/ci/rag_eval_gate.sh
 
       - name: CI Summary (RAG & Smoke)
         if: false
@@ -450,14 +451,14 @@ jobs:
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           echo "[CI] Preparing demo embeddings for RAG"
-          bash scripts/prepare_demo_embeddings.sh
+          bash scripts/ci/prepare_demo_embeddings.sh
 
       - name: Smoke ask (plain + RAG)
         env:
           COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           echo "[CI] Smoke will use MODEL=${MODEL:-<unset>} COLLECTION=${COLLECTION:-<unset>}"
-          bash scripts/smoke_ask.sh
+          bash scripts/ci/smoke_ask.sh
 
       - name: Assert Smoke PASS
         run: |
@@ -554,7 +555,7 @@ jobs:
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
           echo "[CI] Preparing demo embeddings for RAG (rag-gate)"
-          bash scripts/prepare_demo_embeddings.sh
+          bash scripts/ci/prepare_demo_embeddings.sh
 
       - name: RAG evaluation gate
         env:
@@ -567,7 +568,7 @@ jobs:
           RAG_TOP_K: "5"
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
-          bash scripts/rag_eval_gate.sh
+          bash scripts/ci/rag_eval_gate.sh
 
       - name: Upload rag gate artifacts
         if: always()

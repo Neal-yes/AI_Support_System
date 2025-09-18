@@ -1,0 +1,16 @@
+# Node and build artifacts
+node_modules/
+dist/
+.vite/
+.vite-temp/
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
+
+# Playwright / Vitest outputs
+playwright-report/
+.vitest/
+coverage/
