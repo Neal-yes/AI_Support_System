@@ -99,8 +99,8 @@ jobs:
           set -euo pipefail
           intended="${{ steps.seed.outputs.coll }}"
           echo "Intended collection from seed: $intended"
-          # If intended exists, prefer it
-          if curl -fsS "${QDRANT_HTTP}/collections" | jq -e --arg c "$intended" '.result.collections | map(.name) | index($c) != null' >/dev/null 2>&1; then
+          # If intended exists, prefer it (use direct GET for robustness)
+          if curl -fsS "${QDRANT_HTTP}/collections/${intended}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
             echo "coll=$intended" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -121,6 +121,11 @@ jobs:
           fi
           echo "Using detected collection: $best (count=$best_cnt)"
           echo "coll=$best" >> $GITHUB_OUTPUT
+
+      - name: Echo chosen collections
+        run: |
+          echo "seed.coll=${{ steps.seed.outputs.coll }}"
+          echo "detect.coll=${{ steps.detect.outputs.coll }}"
 
       - name: Backup start timestamp
         id: t0
@@ -190,7 +195,21 @@ jobs:
         run: |
           set -euo pipefail
           # count points by paging
+          echo "Qdrant collections:"
+          curl -fsS "${QDRANT_HTTP}/collections" | jq -c '.' || true
           coll="${{ steps.detect.outputs.coll }}"
+          echo "Verifying restored collection: ${coll}"
+          # Guard: ensure collection exists before scroll
+          if ! curl -fsS "${QDRANT_HTTP}/collections/${coll}" | jq -e '.status=="ok"' >/dev/null 2>&1; then
+            # If backup had 0 items, absence of collection is acceptable; report restored_total=0
+            if [ "${{ steps.bk.outputs.bk_total }}" = "0" ]; then
+              echo "Collection ${coll} not found but backup_total=0; treating restored_total as 0" >&2
+              echo "restored_total=0" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Collection ${coll} does not exist before scroll and backup_total>0. Aborting." >&2
+            exit 1
+          fi
           next="null"
           total=0
           while :; do
