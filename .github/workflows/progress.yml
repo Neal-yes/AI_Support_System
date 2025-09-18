@@ -73,7 +73,7 @@ jobs:
           PROG_M15: ${{ vars.PROG_M15 || '45' }}
           PROG_M2: ${{ vars.PROG_M2 || '15' }}
         run: |
-          python scripts/gen_progress_report.py
+          python scripts/ci/gen_progress_report.py
 
       - name: Upload progress radar png
         if: always()

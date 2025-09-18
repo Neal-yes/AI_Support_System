@@ -57,7 +57,7 @@ This directory documents CI verification evidence and how to validate metrics lo
   ```
 - Smoke ask:
   ```bash
-  bash scripts/smoke_ask.sh
+  bash scripts/ci/smoke_ask.sh
   ```
 
 ## Frontend E2E (Playwright)

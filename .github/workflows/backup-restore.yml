@@ -76,7 +76,7 @@ jobs:
           export API_BASE="${API_BASE}"
           export OUT_DIR="${OUT_DIR}"
           export MAX_DOCS="${MAX_DOCS}"
-          bash scripts/prepare_demo_embeddings.sh
+          bash scripts/ci/prepare_demo_embeddings.sh
 
       - name: Capture seed stats
         id: seed
@@ -101,7 +101,7 @@ jobs:
           export QDRANT_HTTP="${QDRANT_HTTP}"
           export RAG_COLLECTION="${{ steps.seed.outputs.coll }}"
           export OUT_DIR="${OUT_DIR}"
-          bash scripts/backup_qdrant_collection.sh
+          bash scripts/ci/backup_qdrant_collection.sh
 
       - name: Backup stats
         id: bk
@@ -142,7 +142,7 @@ jobs:
           # retry up to 3 times in case of transient model init/network issues
           n=0
           until [ "$n" -ge 3 ]; do
-            if bash scripts/restore_qdrant_collection.sh; then
+            if bash scripts/ci/restore_qdrant_collection.sh; then
               break
             fi
             n=$((n+1))
@@ -268,7 +268,7 @@ jobs:
       - name: Validate artifacts
         run: |
           set -euo pipefail
-          python3 scripts/validate_backup_artifacts.py \
+          python3 scripts/ci/validate_backup_artifacts.py \
             --emb artifacts/metrics/embedding_upsert.json \
             --dump artifacts/metrics/qdrant_${{ steps.seed.outputs.coll }}_dump.json \
             --expect-total ${{ steps.seed.outputs.total }} \

@@ -35,3 +35,4 @@ metrics_artifacts.zip
 
 # Frontend local platform config (not used for this repo's CI/CD)
 frontend/.netlify/
+frontend/netlify.toml

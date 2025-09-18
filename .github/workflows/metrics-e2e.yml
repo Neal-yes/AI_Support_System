@@ -212,13 +212,13 @@ jobs:
           fi
           echo "jq: $(jq --version)"
           echo "curl: $(curl --version | head -n1)"
-          if [ ! -f "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh" ]; then
-            echo "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh not found" >&2
+          if [ ! -f "$GITHUB_WORKSPACE/scripts/ci/verify_tenant_metrics.sh" ]; then
+            echo "$GITHUB_WORKSPACE/scripts/ci/verify_tenant_metrics.sh not found" >&2
             exit 2
           fi
           mkdir -p artifacts/metrics
           echo "Running verify_tenant_metrics.sh ..."
-          bash -x "$GITHUB_WORKSPACE/scripts/verify_tenant_metrics.sh" demo
+          bash -x "$GITHUB_WORKSPACE/scripts/ci/verify_tenant_metrics.sh" demo
 
       - name: Ensure demo dataset (demo_faq.jsonl)
         run: |
@@ -253,7 +253,7 @@ jobs:
         run: |
           # 重要：不要把生成模型（LLM）传给嵌入脚本，否则会出现向量维度不匹配。
           # 不设置 RAG_MODEL，让后端使用其默认的嵌入模型（与集合 schema 一致）。
-          bash "$GITHUB_WORKSPACE/scripts/prepare_demo_embeddings.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/prepare_demo_embeddings.sh"
 
       - name: Log RAG preflight (non-blocking)
         continue-on-error: true
@@ -289,7 +289,7 @@ jobs:
           MODEL: ${{ env.MODEL_SMALL }}
           SMOKE_VERBOSE: "1"
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/smoke_ask.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/smoke_ask.sh"
 
       - name: Assert Smoke PASS
         run: |
@@ -380,13 +380,13 @@ jobs:
           RAG_TOP_K: "5"
           RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/rag_eval_gate.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/rag_eval_gate.sh"
 
       - name: Backup Qdrant collection
         env:
           RAG_COLLECTION: default_collection
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/backup_qdrant_collection.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/backup_qdrant_collection.sh"
 
       - name: List metrics artifacts before upload
         if: always()
@@ -511,7 +511,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Running rate-limit burst script to trigger tools rate limiting"
-          bash "$GITHUB_WORKSPACE/scripts/tools_rate_limit_burst.sh"
+          bash "$GITHUB_WORKSPACE/scripts/tools/tools_rate_limit_burst.sh"
           echo "Fetching /metrics after burst"
           curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_after_burst.prom
           echo "Asserting tools_rate_limited_total increased beyond tiny baseline"
@@ -532,7 +532,7 @@ jobs:
         run: |
           set +e
           echo "Running circuit breaker probe (non-blocking)"
-          bash "$GITHUB_WORKSPACE/scripts/tools_circuit_breaker_probe.sh" || true
+          bash "$GITHUB_WORKSPACE/scripts/tools/tools_circuit_breaker_probe.sh" || true
           echo "Fetching /metrics after circuit probe"
           curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_after_circuit.prom || true
 

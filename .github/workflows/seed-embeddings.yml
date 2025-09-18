@@ -70,7 +70,7 @@ jobs:
           MAX_DOCS: "500"
         run: |
           set -euxo pipefail
-          bash scripts/prepare_demo_embeddings.sh
+          bash scripts/ci/prepare_demo_embeddings.sh
           echo "Embedding seed finished"
 
       - name: Assert embedding summary and report
