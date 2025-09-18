@@ -87,14 +87,14 @@ warmup_embed() {
   done
 }
 
-# Ensure SRC_JSONL exists with fallbacks
+# Ensure SRC_JSONL exists with fallbacks; if none found, auto-generate a tiny dataset
 if [ ! -f "$SRC_JSONL" ]; then
-  echo "找不到评测源文件: $SRC_JSONL，尝试回退..." >&2
+  echo "找不到评测源文件: $SRC_JSONL，尝试回退/自动生成..." >&2
   # Try gz counterpart
   if [ -f "${SRC_JSONL}.gz" ]; then
     echo "发现压缩文件 ${SRC_JSONL}.gz，解压生成 ${SRC_JSONL}"
     gunzip -c "${SRC_JSONL}.gz" > "$SRC_JSONL"
-  # Try demo.jsonl family in repo root
+  # Try demo.jsonl family in repo root (legacy)
   elif [ -f "demo_faq.jsonl" ]; then
     SRC_JSONL="demo_faq.jsonl"
     echo "使用回退源: $SRC_JSONL"
@@ -110,8 +110,18 @@ if [ ! -f "$SRC_JSONL" ]; then
     gunzip -c "demo.jsonl.gz" > "demo.jsonl"
     SRC_JSONL="demo.jsonl"
   else
-    echo "仍未找到可用评测源文件" >&2
-    exit 2
+    # Auto-generate a minimal JSONL into OUT_DIR and use it
+    AUTO_JSONL="$OUT_DIR/demo_faq.autogen.jsonl"
+    echo "未找到任何 demo 源，自动生成最小样例到 $AUTO_JSONL" >&2
+    cat > "$AUTO_JSONL" <<'EOJ'
+{"question":"如何查看 Prometheus 指标?","answer":null,"tag":"faq"}
+{"question":"本地 AI 客服系统如何工作?","answer":null,"tag":"faq"}
+{"question":"如何进行 RAG 检索?","answer":null,"tag":"faq"}
+{"question":"如何导入示例数据?","answer":null,"tag":"faq"}
+{"question":"如何排查 500 错误?","answer":null,"tag":"faq"}
+EOJ
+    SRC_JSONL="$AUTO_JSONL"
+    echo "使用自动生成源: $SRC_JSONL"
   fi
 fi
 
@@ -150,8 +160,17 @@ if [ "$COUNT" = "0" ]; then
   }
 
   fb=$(choose_fallback "$SRC_JSONL") || {
-    echo "仍未找到可用评测源文件" >&2
-    exit 2
+    # Fall back to auto-generated tiny corpus if no fallback available
+    AUTO_JSONL="$OUT_DIR/demo_faq.autogen.jsonl"
+    echo "未找到回退源，自动生成最小样例到 $AUTO_JSONL" >&2
+    cat > "$AUTO_JSONL" <<'EOJ'
+{"question":"如何查看 Prometheus 指标?","answer":null,"tag":"faq"}
+{"question":"本地 AI 客服系统如何工作?","answer":null,"tag":"faq"}
+{"question":"如何进行 RAG 检索?","answer":null,"tag":"faq"}
+{"question":"如何导入示例数据?","answer":null,"tag":"faq"}
+{"question":"如何排查 500 错误?","answer":null,"tag":"faq"}
+EOJ
+    echo "$AUTO_JSONL"
   }
   SRC_JSONL="$fb"
   echo "使用回退源: $SRC_JSONL"

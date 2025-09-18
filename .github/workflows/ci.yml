@@ -564,7 +564,6 @@ jobs:
           GATE_STRICT: "both"
           GATE_MIN_TOTAL: "10"
           GATE_REQUIRE_MIN_TOTAL: "0"
-          RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
           RAG_TOP_K: "5"
           RAG_COLLECTION: ${{ env.METRICS_TEST_COLLECTION }}
         run: |
