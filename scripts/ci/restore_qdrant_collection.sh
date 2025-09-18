@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # 从备份 JSON（scroll 导出的 points）恢复到 Qdrant 集合
-# 方式：读取 payload.text 重建嵌入，通过 /embedding/upsert 写回（不依赖原向量）
-# 注意：如需原向量级别恢复，请改为直接调用 Qdrant points upsert 接口并携带 vectors。
+# 方式：读取 payload.text，通过 /embedding/embed 生成向量，并使用 Qdrant points/overwrite 直接写入目标集合
+# 优点：不依赖后端 /embedding/upsert 的集合选择逻辑，确保写入到指定集合
 # 环境变量：
 # - API_BASE (默认 http://localhost:8000)
 # - RAG_COLLECTION 目标集合（默认 default_collection）
@@ -11,6 +11,7 @@ set -euo pipefail
 # - BATCH_SIZE (默认 64)
 
 API_BASE=${API_BASE:-http://localhost:8000}
+QDRANT_HTTP=${QDRANT_HTTP:-http://localhost:6333}
 COLL=${RAG_COLLECTION:-default_collection}
 BATCH_SIZE=${BATCH_SIZE:-64}
 OUT_DIR=${OUT_DIR:-artifacts/metrics}
@@ -61,45 +62,68 @@ while [ $OFFSET -lt $COUNT ]; do
     continue
   fi
 
-  # 构造请求体：根据是否设置 RAG_MODEL 分支
+  # 1) 先生成向量
   if [ -n "${RAG_MODEL}" ]; then
-    BODY=$(jq -n \
-      --argjson texts "$TEXTS" \
-      --argjson payloads "$PAYLOADS" \
-      --arg coll "$COLL" \
-      --arg model "${RAG_MODEL}" \
-      '{texts:$texts, payloads:$payloads, collection:$coll, model:$model}')
+    EMB_BODY=$(jq -n --argjson texts "$TEXTS" --arg model "${RAG_MODEL}" '{texts:$texts, model:$model}')
   else
-    BODY=$(jq -n \
-      --argjson texts "$TEXTS" \
-      --argjson payloads "$PAYLOADS" \
-      --arg coll "$COLL" \
-      '{texts:$texts, payloads:$payloads, collection:$coll}')
+    EMB_BODY=$(jq -n --argjson texts "$TEXTS" '{texts:$texts}')
   fi
-
-  # 每批最多重试3次，指数退避
   ATT=1
   while :; do
     set +e
-    HC=$(curl -sS --connect-timeout 2 --max-time 15 -o /tmp/restore_upsert.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$BODY" "$API_BASE/embedding/upsert")
+    EMB_HTTP=$(curl -sS --connect-timeout 2 --max-time 20 -o /tmp/restore_embed.json -w "%{http_code}" -H 'Content-Type: application/json' -d "$EMB_BODY" "$API_BASE/embedding/embed")
     RC=$?
     set -e
-    if [ $RC -eq 0 ] && [ "$HC" = "200" ]; then
+    if [ $RC -eq 0 ] && [ "$EMB_HTTP" = "200" ]; then
       break
     fi
-    echo "[RESTORE] upsert 失败: rc=$RC http=$HC offset=$OFFSET size=$SIZE attempt=$ATT" >&2
-    sed -n '1,120p' /tmp/restore_upsert.json >&2 || true
+    echo "[RESTORE] embed 失败: rc=$RC http=$EMB_HTTP offset=$OFFSET size=$SIZE attempt=$ATT" >&2
+    sed -n '1,120p' /tmp/restore_embed.json >&2 || true
     if [ $ATT -ge 3 ]; then
-      echo "[RESTORE] upsert 多次重试仍失败，终止" >&2
+      echo "[RESTORE] embed 多次重试仍失败，终止" >&2
       exit 1
     fi
-    SLEEP=$(( ATT * 2 ))
-    sleep $SLEEP
+    sleep $(( ATT * 2 ))
     ATT=$(( ATT + 1 ))
   done
-  CNT=$(jq -r '.count // 0' /tmp/restore_upsert.json)
+  VECTORS=$(jq -c '.embeddings // []' /tmp/restore_embed.json)
+
+  # 2) 组装 Qdrant points（保持原 id 与 payload；使用默认未命名向量字段 vector）
+  # dump 切片 SLICE 中应存在 id 与 payload.text
+  POINTS=$(jq -n --argjson slice "$SLICE" --argjson vecs "$VECTORS" '
+    [ range(0; ($slice|length)) as $i | {
+        id: ($slice[$i].id),
+        vector: ($vecs[$i] // []),
+        payload: ($slice[$i].payload // {})
+      }
+    ]')
+  UPSERT_BODY=$(jq -n --argjson points "$POINTS" '{points:$points}')
+
+  # 3) 写入 Qdrant（overwrite）
+  ATT=1
+  while :; do
+    set +e
+    Q_HTTP=$(curl -sS --connect-timeout 2 --max-time 20 -o /tmp/qdr_overwrite.json -w "%{http_code}" \
+      -X PUT -H 'Content-Type: application/json' -d "$UPSERT_BODY" \
+      "$QDRANT_HTTP/collections/$COLL/points/overwrite")
+    RC=$?
+    set -e
+    if [ $RC -eq 0 ] && [ "$Q_HTTP" = "200" ]; then
+      break
+    fi
+    echo "[RESTORE] qdrant overwrite 失败: rc=$RC http=$Q_HTTP offset=$OFFSET size=$SIZE attempt=$ATT" >&2
+    sed -n '1,160p' /tmp/qdr_overwrite.json >&2 || true
+    if [ $ATT -ge 3 ]; then
+      echo "[RESTORE] overwrite 多次重试仍失败，终止" >&2
+      exit 1
+    fi
+    sleep $(( ATT * 2 ))
+    ATT=$(( ATT + 1 ))
+  done
+  # 以本批文本数作为增量计数
+  CNT=$(echo "$TEXTS" | jq 'length')
   TOTAL=$(( TOTAL + CNT ))
-  echo "[RESTORE] 本批 $CNT 条，累计 $TOTAL"
+  echo "[RESTORE] 本批写入 $CNT 条，累计 $TOTAL"
 
   OFFSET=$(( OFFSET + SIZE ))
 
