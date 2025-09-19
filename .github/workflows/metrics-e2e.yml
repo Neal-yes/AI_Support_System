@@ -307,7 +307,6 @@ jobs:
           # 给 Prometheus 一个采样与评估窗口
           sleep 5
 
-<<<<<<< HEAD
       - name: Stabilize samples for p95 (resample)
         run: |
           set +e
@@ -348,8 +347,6 @@ jobs:
             sleep 3
           done
 
-=======
->>>>>>> origin/main
       - name: Smoke test unified ask API
         env:
           MODEL: ${{ env.MODEL_SMALL }}
