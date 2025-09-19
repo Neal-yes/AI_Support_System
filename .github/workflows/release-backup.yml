@@ -322,6 +322,26 @@ jobs:
             [ -n "$restored_total" ] && echo "- restored_total: $restored_total" || true;
             [ -n "$rto_secs" ] && echo "- RTO_seconds: $rto_secs" || true;
           } >> "$out_dir/RELEASE_NOTES.md"
+
+          # Highlight Backup Signals (prefer ci_summary.txt; fallback to derived values)
+          cs_file="$out_dir/ci_summary.txt"
+          bk_ci=""; rt_ci=""; rto_ci=""
+          if [ -f "$cs_file" ]; then
+            bk_ci=$(sed -n -E 's/^- +backup_total: +//p' "$cs_file" | head -n1)
+            rt_ci=$(sed -n -E 's/^- +restored_total: +//p' "$cs_file" | head -n1)
+            rto_ci=$(sed -n -E 's/^- +restore_duration_seconds \(RTO\): +//p' "$cs_file" | head -n1)
+          fi
+          bk_show="${bk_ci:-$total}"     # fallback to seed total when backup not in ci_summary
+          rt_show="${rt_ci:-$restored_total}"
+          rto_show="${rto_ci:-$rto_secs}"
+          {
+            echo;
+            echo "## Backup Signals";
+            echo;
+            [ -n "$bk_show" ] && echo "- backup_total: $bk_show" || echo "- backup_total: N/A";
+            [ -n "$rt_show" ] && echo "- restored_total: $rt_show" || echo "- restored_total: N/A";
+            [ -n "$rto_show" ] && echo "- RTO_seconds: $rto_show" || echo "- RTO_seconds: N/A";
+          } >> "$out_dir/RELEASE_NOTES.md"
           if [ -f "$out_dir/VALIDATION_SUMMARY.txt" ]; then
             {
               echo;
@@ -635,6 +655,7 @@ jobs:
           run_metrics=$(sed -n '/^## Run Metrics$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
           ci_summary=$(sed -n '/^## CI Summary$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 15 || true)
           key_signals=$(sed -n '/^## Key Signals$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
+          bk_signals=$(sed -n '/^## Backup Signals$/,/^## /p' "$notes_path" | sed '1d;$d' | head -n 10 || true)
           # Evaluate warning flags from CI Summary
           warn_msgs=()
           # API success
@@ -684,11 +705,11 @@ jobs:
           fi
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-            payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Key Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{text:$text}')
+            payload=$(jq -n --arg text "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Backup Signals:\n${bk_signals}\n\nKey Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{text:$text}')
             curl -fsSL -H 'Content-Type: application/json' -d "$payload" "$SLACK_WEBHOOK_URL" || true
           fi
           if [ -n "${LARK_WEBHOOK_URL:-}" ]; then
-            payload=$(jq -n --arg msg "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Key Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{msg_type:"text", content:{text:$msg}}')
+            payload=$(jq -n --arg msg "[AI Support] Release published: ${tag_name}\n${release_url}\n\n${warn_head}Backup Signals:\n${bk_signals}\n\nKey Signals:\n${key_signals}\n\nRun Metrics:\n${run_metrics}\n\nCI Summary:\n${ci_summary}" '{msg_type:"text", content:{text:$msg}}')
             curl -fsSL -H 'Content-Type: application/json' -d "$payload" "$LARK_WEBHOOK_URL" || true
           fi
 

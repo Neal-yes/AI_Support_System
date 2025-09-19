@@ -30,6 +30,33 @@ bash scripts/ci/backup_qdrant_collection.sh
 
 ---
 
+## 当前实现与规范（CI 中的 Backup & Restore）
+
+- 命名向量字段：`text`
+  - 集合 Schema 固定为命名向量字段 `text` 且距离为 `Cosine`。
+  - 创建集合示例：`{"vectors": {"text": {"size": <dim>, "distance": "Cosine"}}}`。
+- 恢复目标集合命名：`<source>__restored`
+  - 保留源集合（不删除），避免对现网集合造成影响。
+- 数据恢复路径：直接对 Qdrant 写入（绕过后端 `/embedding/upsert`）
+  - 先调用 `/embedding/embed` 生成 embeddings；
+  - 再调用 Qdrant `PUT /collections/<coll>/points?wait=true` 批量 upsert：
+    - 点结构：`{"points":[{"id":..., "vectors": {"text": [...]}, "payload": {...}}]}`。
+  - 仅恢复 `payload.text` 为字符串的样本；如条目缺失 `id`，使用 `OFFSET+i` 生成确定性 id。
+- 校验策略：
+  - 使用 `POST /collections/<coll>/points/count` 设置 `exact=true` 做精确计数；
+  - 增加重试（最多 5 次）缓解可见性延迟；
+  - 额外使用 `scroll` 抽取前 10 条点位做直观确认；
+  - CI 中为“软告警”，不阻断主干（计数不一致时发出 warning）。
+
+> 注：README 中的 “Backup Signals（最近一次）” 支持自动刷新。开关由仓库变量 `UPDATE_README_SIGNALS` 控制，仅在 `main` 分支、且该变量为 `true` 时，`/.github/workflows/backup-restore.yml` 会在运行结束后自动更新 `README.md` 的占位块，并推送 commit（携带 `[skip ci]`）。
+
+### 排查与诊断建议（出现计数不一致时）
+- 打印每批次对齐情况：`fs_len`（过滤后样本数）、`vec_len`（embeddings 数量）与 sample point id；
+- 检查 upsert 返回体是否 `status=="ok"`；
+- 在恢复后执行一次 `scroll`，确认是否能取到前 10 条点位；
+- 若需要不同的命名向量字段，请同时调整集合 Schema 与 upsert 的 `vectors.<name>` 字段以保持一致；
+- 如仍存在延迟，考虑增加 `wait=true` 或在 `count` 前增加等待/重试。
+
 ## 恢复演练步骤
 前提：有一份可用备份（zip/jsonl 等）；确保目标 Qdrant 可访问。
 

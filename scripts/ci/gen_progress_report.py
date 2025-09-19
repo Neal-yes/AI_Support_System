@@ -19,7 +19,7 @@ import math
 import os
 import sys
 from dataclasses import dataclass
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, Optional
 
 # Lazy import to allow running without matplotlib locally when not needed
 try:
@@ -159,6 +159,42 @@ def write_kanban_md(p: Progress, out_md: str) -> None:
         ]
         backup_section = "\n".join(backup_lines)
 
+    # Optional Backup Signals from backup-restore CI summary
+    bk_sig_section = ""
+    try:
+        bk_ci_path = os.path.join('artifacts', 'metrics', 'ci_summary.txt')
+        backup_total: Optional[str] = None
+        restored_total: Optional[str] = None
+        bkt: Optional[str] = None
+        rto: Optional[str] = None
+        if os.path.isfile(bk_ci_path):
+            with open(bk_ci_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            def ext(prefix: str) -> Optional[str]:
+                for ln in lines:
+                    ln = ln.strip()
+                    if ln.startswith(prefix):
+                        return ln.split(':', 1)[1].strip()
+                return None
+            backup_total = ext('- backup_total')
+            restored_total = ext('- restored_total')
+            bkt = ext('- backup_duration_seconds')
+            rto = ext('- restore_duration_seconds (RTO)')
+        # If any parsed, render section
+        if any(x for x in [backup_total, restored_total, bkt, rto]):
+            lines_out = [
+                "",
+                "## Backup Signals",
+                f"- backup_total: {backup_total or 'N/A'}",
+                f"- restored_total: {restored_total or 'N/A'}",
+                f"- backup_duration_seconds: {bkt or 'N/A'}",
+                f"- restore_duration_seconds (RTO): {rto or 'N/A'}",
+                "",
+            ]
+            bk_sig_section = "\n".join(lines_out)
+    except Exception:
+        bk_sig_section = ""
+
     content = f"""# 进度看板（自动生成）
 
 - 生成时间（UTC）：{os.getenv('GITHUB_RUN_ATTEMPT') or ''}
@@ -179,7 +215,7 @@ def write_kanban_md(p: Progress, out_md: str) -> None:
 - RAG 指标：artifacts/metrics/rag_eval.json / rag_eval.csv
 - Smoke 摘要：artifacts/metrics/smoke_summary.md
 - Playwright：playwright-report / playwright-junit-xml
-""" + rag_section + backup_section
+""" + rag_section + backup_section + bk_sig_section
     with open(out_md, "w", encoding="utf-8") as f:
         f.write(content)
 
@@ -201,6 +237,26 @@ def write_summary_json(p: Progress, out_json: str) -> None:
                 }
         except Exception:
             pass
+    # Enrich with Backup Signals (optional)
+    try:
+        bk_ci_path = os.path.join('artifacts', 'metrics', 'ci_summary.txt')
+        if os.path.isfile(bk_ci_path):
+            with open(bk_ci_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            def ext(prefix: str) -> Optional[str]:
+                for ln in lines:
+                    ln = ln.strip()
+                    if ln.startswith(prefix):
+                        return ln.split(':', 1)[1].strip()
+                return None
+            payload['BackupSignals'] = {
+                'backup_total': ext('- backup_total'),
+                'restored_total': ext('- restored_total'),
+                'backup_duration_seconds': ext('- backup_duration_seconds'),
+                'restore_duration_seconds': ext('- restore_duration_seconds (RTO)')
+            }
+    except Exception:
+        pass
     backup_path = os.path.join('artifacts', 'metrics', 'backup_health.json')
     if os.path.isfile(backup_path):
         try:

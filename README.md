@@ -23,7 +23,31 @@
   ```
 # AI Support System
 
+[![Backup & Restore Qdrant](https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml)
+[![Latest Release (Backup Artifacts)](https://img.shields.io/github/v/release/Neal-yes/AI_Support_System?include_prereleases&label=Backup%20Artifacts%20Release)](https://github.com/Neal-yes/AI_Support_System/releases)
+[![CI](https://github.com/Neal-yes/AI_Support_System/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/ci.yml)
+[![Metrics E2E](https://github.com/Neal-yes/AI_Support_System/actions/workflows/metrics-e2e.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/metrics-e2e.yml)
+
 本项目为本地 AI 客服系统（FastAPI + Qdrant + Postgres + Redis + Ollama）。
+
+<!-- BACKUP_SIGNALS_START -->
+### Backup Signals（最近一次）
+
+- backup_total: N/A
+- restored_total: N/A
+- RTO_seconds: N/A
+- run: N/A
+- 查看历史 Release：https://github.com/Neal-yes/AI_Support_System/releases
+<!-- BACKUP_SIGNALS_END -->
+
+<!-- METRICS_SNAPSHOT_START -->
+### Metrics Snapshot（最近一次）
+
+- LLM_generate_p95: N/A
+- RAG_retrieval_p95: N/A
+- /api/v1/ask success_rate: N/A
+- run: N/A
+<!-- METRICS_SNAPSHOT_END -->
 
 ## 快速开始
 
@@ -75,6 +99,28 @@ docker compose down
     - 定时触发：每日 03:00 Asia/Shanghai（19:00 UTC）
   - 工件保留期：14 天
   - 校验：内置“Validate artifacts”步骤会断言工件内容并把结果写入 Job Summary
+
+### 最近备份/恢复信号（Backup Signals）
+
+- Release Notes 将在“Backup Signals”小节展示最近一次的关键指标：
+  - `backup_total` / `restored_total` / `RTO_seconds`
+- 这些指标来自 CI 汇总文本 `artifacts/metrics/ci_summary.txt`（工作流自动生成），并在 Release 工作流 `/.github/workflows/release-backup.yml` 中注入。
+
+快速查看（示例，使用 gh CLI）：
+
+```bash
+# 1) 查看最近一次成功的 backup-restore 运行
+gh run list --workflow=backup-restore.yml -R Neal-yes/AI_Support_System --branch main -L 1 --json databaseId,url
+
+# 2) 下载工件并查看 ci_summary.txt（将 <RUN_ID> 替换为上一步的 ID）
+RUN_ID=<RUN_ID>
+gh run download $RUN_ID -R Neal-yes/AI_Support_System \
+  -n backup-restore-${RUN_ID}-1 -D download_artifacts/${RUN_ID}
+sed -n '1,200p' download_artifacts/${RUN_ID}/artifacts/metrics/ci_summary.txt
+
+# 3) 打开最近一次 Release（自动生成的 Release Notes 中也含 Backup Signals）
+gh release list -R Neal-yes/AI_Support_System | head -n 1
+```
 
 ### 下载工件（示例）
 

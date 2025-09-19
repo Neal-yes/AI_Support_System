@@ -28,6 +28,8 @@ on:
 
 jobs:
   e2e-metrics:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -644,6 +646,36 @@ jobs:
               sed -n '1,80p' artifacts/metrics/api_success_extra.txt || true
             fi
           } > artifacts/metrics/metrics_e2e_summary.txt
+
+      - name: Update README Metrics Snapshot (optional)
+        if: ${{ vars.UPDATE_README_METRICS == 'true' && github.ref_name == 'main' }}
+        run: |
+          set -euo pipefail
+          file="README.md"
+          # Parse p95 from latency_percentiles.txt if present
+          llm95="N/A"; rag95="N/A"; ask_rate="N/A"; run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -f artifacts/metrics/latency_percentiles.txt ]; then
+            llm95=$(grep -E '^- LLM generate p95:' artifacts/metrics/latency_percentiles.txt | head -n1 | sed -E 's/.*: *([^ ]+).*/\1/' || echo 'N/A')
+            rag95=$(grep -E '^- RAG retrieval p95:' artifacts/metrics/latency_percentiles.txt | head -n1 | sed -E 's/.*: *([^ ]+).*/\1/' || echo 'N/A')
+          fi
+          if [ -f artifacts/metrics/api_success.txt ]; then
+            ask_rate=$(grep -E '^- success_rate:' artifacts/metrics/api_success.txt | head -n1 | sed -E 's/.*: *(.+)/\1/' || echo 'N/A')
+          fi
+          echo "Updating METRICS_SNAPSHOT in $file"
+          tmp=$(mktemp)
+          awk -v llm="${llm95}" -v rag="${rag95}" -v rate="${ask_rate}" -v run="$run_url" '
+            BEGIN{inblk=0}
+            /<!-- METRICS_SNAPSHOT_START -->/{print; print "### Metrics Snapshot（最近一次）"; print ""; \
+              print "- LLM_generate_p95: " llm; print "- RAG_retrieval_p95: " rag; print "- /api/v1/ask success_rate: " rate; print "- run: " run; inblk=1; next}
+            /<!-- METRICS_SNAPSHOT_END -->/{inblk=0; print; next}
+            { if (!inblk) print }
+          ' "$file" > "$tmp"
+          mv "$tmp" "$file"
+          git config user.email "github-actions@users.noreply.github.com"
+          git config user.name "github-actions"
+          git add "$file"
+          git commit -m "docs(README): update Metrics Snapshot [skip ci]" || exit 0
+          git push
 
       - name: Dump docker logs on failure or cancel
         if: failure() || cancelled()
