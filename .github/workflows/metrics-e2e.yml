@@ -286,6 +286,27 @@ jobs:
           # do not fail the job on warmup
           true
 
+      - name: Generate minimum samples for p95
+        run: |
+          set +e
+          echo "Generating minimum samples for LLM and RAG p95 histograms"
+          # 10x plain (LLM path)
+          for i in $(seq 1 10); do
+            body="{\"query\":\"hi $i\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
+            curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
+              http://localhost:8000/api/v1/ask || true
+            sleep 1
+          done
+          # 10x RAG (retrieval path)
+          for i in $(seq 1 10); do
+            body="{\"query\":\"问答 $i\",\"use_rag\":true,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
+            curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
+              http://localhost:8000/api/v1/ask || true
+            sleep 1
+          done
+          # 给 Prometheus 一个采样与评估窗口
+          sleep 5
+
       - name: Smoke test unified ask API
         env:
           MODEL: ${{ env.MODEL_SMALL }}
@@ -459,18 +480,30 @@ jobs:
               echo '# Latency percentiles (approx from histogram)'
               echo
               if [ "${llm_count}" != "0" ]; then
-                v50=$(calc_pctile llm_generate_duration_seconds 0.50 "$llm_count"); [ -n "$v50" ] && echo "- LLM generate p50: $v50 s"
-                v90=$(calc_pctile llm_generate_duration_seconds 0.90 "$llm_count"); [ -n "$v90" ] && echo "- LLM generate p90: $v90 s"
-                v95=$(calc_pctile llm_generate_duration_seconds 0.95 "$llm_count"); [ -n "$v95" ] && echo "- LLM generate p95: $v95 s"
-                v99=$(calc_pctile llm_generate_duration_seconds 0.99 "$llm_count"); [ -n "$v99" ] && echo "- LLM generate p99: $v99 s"
+                v50=$(calc_pctile llm_generate_duration_seconds 0.50 "$llm_count"); [ -n "$v50" ] && echo "- LLM generate p50: $v50 s" || echo "- LLM generate p50: N/A (parse)"
+                v90=$(calc_pctile llm_generate_duration_seconds 0.90 "$llm_count"); [ -n "$v90" ] && echo "- LLM generate p90: $v90 s" || echo "- LLM generate p90: N/A (parse)"
+                v95=$(calc_pctile llm_generate_duration_seconds 0.95 "$llm_count"); [ -n "$v95" ] && echo "- LLM generate p95: $v95 s" || echo "- LLM generate p95: N/A (parse)"
+                v99=$(calc_pctile llm_generate_duration_seconds 0.99 "$llm_count"); [ -n "$v99" ] && echo "- LLM generate p99: $v99 s" || echo "- LLM generate p99: N/A (parse)"
                 echo "- LLM samples: ${llm_count}"
+              else
+                echo "- LLM generate p50: N/A (0 samples)"
+                echo "- LLM generate p90: N/A (0 samples)"
+                echo "- LLM generate p95: N/A (0 samples)"
+                echo "- LLM generate p99: N/A (0 samples)"
+                echo "- LLM samples: 0"
               fi
               if [ "${rag_count}" != "0" ]; then
-                v50=$(calc_pctile rag_retrieval_duration_seconds 0.50 "$rag_count"); [ -n "$v50" ] && echo "- RAG retrieval p50: $v50 s"
-                v90=$(calc_pctile rag_retrieval_duration_seconds 0.90 "$rag_count"); [ -n "$v90" ] && echo "- RAG retrieval p90: $v90 s"
-                v95=$(calc_pctile rag_retrieval_duration_seconds 0.95 "$rag_count"); [ -n "$v95" ] && echo "- RAG retrieval p95: $v95 s"
-                v99=$(calc_pctile rag_retrieval_duration_seconds 0.99 "$rag_count"); [ -n "$v99" ] && echo "- RAG retrieval p99: $v99 s"
+                v50=$(calc_pctile rag_retrieval_duration_seconds 0.50 "$rag_count"); [ -n "$v50" ] && echo "- RAG retrieval p50: $v50 s" || echo "- RAG retrieval p50: N/A (parse)"
+                v90=$(calc_pctile rag_retrieval_duration_seconds 0.90 "$rag_count"); [ -n "$v90" ] && echo "- RAG retrieval p90: $v90 s" || echo "- RAG retrieval p90: N/A (parse)"
+                v95=$(calc_pctile rag_retrieval_duration_seconds 0.95 "$rag_count"); [ -n "$v95" ] && echo "- RAG retrieval p95: $v95 s" || echo "- RAG retrieval p95: N/A (parse)"
+                v99=$(calc_pctile rag_retrieval_duration_seconds 0.99 "$rag_count"); [ -n "$v99" ] && echo "- RAG retrieval p99: $v99 s" || echo "- RAG retrieval p99: N/A (parse)"
                 echo "- RAG samples: ${rag_count}"
+              else
+                echo "- RAG retrieval p50: N/A (0 samples)"
+                echo "- RAG retrieval p90: N/A (0 samples)"
+                echo "- RAG retrieval p95: N/A (0 samples)"
+                echo "- RAG retrieval p99: N/A (0 samples)"
+                echo "- RAG samples: 0"
               fi
             } > "$out_lat"
             # API success rate for /api/v1/ask
