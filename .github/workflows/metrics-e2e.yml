@@ -307,6 +307,7 @@ jobs:
           # 给 Prometheus 一个采样与评估窗口
           sleep 5
 
+
       - name: Stabilize samples for p95 (resample)
         run: |
           set +e
@@ -329,6 +330,8 @@ jobs:
           done
           # 再给 Prom 一个窗口
           sleep 5
+
+
 
       - name: Smoke test unified ask API
         env:
