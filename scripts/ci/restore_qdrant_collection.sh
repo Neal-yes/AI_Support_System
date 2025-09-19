@@ -53,8 +53,10 @@ while [ $OFFSET -lt $COUNT ]; do
   SIZE=$(( COUNT - OFFSET ))
   if [ $SIZE -gt $BATCH_SIZE ]; then SIZE=$BATCH_SIZE; fi
   SLICE=$(jq ".[$OFFSET:($OFFSET+$SIZE)]" "$SRC_DUMP")
-  TEXTS=$(echo "$SLICE" | jq -c '[ .[].payload.text | select(type=="string") ]')
-  PAYLOADS=$(echo "$SLICE" | jq -c '[ .[].payload ]')
+  # 仅保留 payload.text 为字符串的条目，确保与 embeddings 对齐
+  FS=$(echo "$SLICE" | jq '[ .[] | select(.payload.text | type=="string") ]')
+  TEXTS=$(echo "$FS" | jq -c '[ .[].payload.text ]')
+  PAYLOADS=$(echo "$FS" | jq -c '[ .[].payload ]')
 
   # 跳过空批
   if [ "$(echo "$TEXTS" | jq -r 'length')" = "0" ]; then
@@ -87,41 +89,51 @@ while [ $OFFSET -lt $COUNT ]; do
     ATT=$(( ATT + 1 ))
   done
   VECTORS=$(jq -c '.embeddings // []' /tmp/restore_embed.json)
-
-  # 2) 组装 Qdrant points（保持原 id 与 payload；使用默认未命名向量字段 vector）
-  # dump 切片 SLICE 中应存在 id 与 payload.text
-  POINTS=$(jq -n --argjson slice "$SLICE" --argjson vecs "$VECTORS" '
-    [ range(0; ($slice|length)) as $i | {
-        id: ($slice[$i].id),
+  FS_LEN=$(echo "$FS" | jq 'length')
+  VEC_LEN=$(echo "$VECTORS" | jq 'length')
+  echo "[RESTORE] batch lens: fs=${FS_LEN} vec=${VEC_LEN}"
+  
+  # 2) 组装 Qdrant points（仅对齐过滤后的切片，与 embeddings 一一对应）
+  POINTS=$(jq -n --argjson slice "$FS" --argjson vecs "$VECTORS" --argjson off $OFFSET '
+    [ range(0; ($vecs|length)) as $i | {
+        id: (if ($slice[$i].id != null) then $slice[$i].id else ($i + $off) end),
         vector: ($vecs[$i] // []),
         payload: ($slice[$i].payload // {})
-      }
-    ]')
+      } ]')
   UPSERT_BODY=$(jq -n --argjson points "$POINTS" '{points:$points}')
+  # 打印首个点的 id 作为样例
+  SAMPLE_ID=$(echo "$POINTS" | jq -r '.[0].id // "<none>"')
+  echo "[RESTORE] sample point id: ${SAMPLE_ID}"
 
-  # 3) 写入 Qdrant（overwrite）
+  # 3) 写入 Qdrant（标准 upsert）
   ATT=1
   while :; do
     set +e
-    Q_HTTP=$(curl -sS --connect-timeout 2 --max-time 20 -o /tmp/qdr_overwrite.json -w "%{http_code}" \
+    Q_HTTP=$(curl -sS --connect-timeout 2 --max-time 20 -o /tmp/qdr_upsert.json -w "%{http_code}" \
       -X PUT -H 'Content-Type: application/json' -d "$UPSERT_BODY" \
-      "$QDRANT_HTTP/collections/$COLL/points/overwrite")
+      "$QDRANT_HTTP/collections/$COLL/points?wait=true")
     RC=$?
     set -e
     if [ $RC -eq 0 ] && [ "$Q_HTTP" = "200" ]; then
       break
     fi
-    echo "[RESTORE] qdrant overwrite 失败: rc=$RC http=$Q_HTTP offset=$OFFSET size=$SIZE attempt=$ATT" >&2
-    sed -n '1,160p' /tmp/qdr_overwrite.json >&2 || true
+    echo "[RESTORE] qdrant upsert 失败: rc=$RC http=$Q_HTTP offset=$OFFSET size=$SIZE attempt=$ATT" >&2
+    sed -n '1,160p' /tmp/qdr_upsert.json >&2 || true
     if [ $ATT -ge 3 ]; then
-      echo "[RESTORE] overwrite 多次重试仍失败，终止" >&2
+      echo "[RESTORE] upsert 多次重试仍失败，终止" >&2
       exit 1
     fi
     sleep $(( ATT * 2 ))
     ATT=$(( ATT + 1 ))
   done
-  # 以本批文本数作为增量计数
-  CNT=$(echo "$TEXTS" | jq 'length')
+  # 基本校验：检查返回状态
+  if ! jq -e '.status=="ok"' /tmp/qdr_upsert.json >/dev/null 2>&1; then
+    echo "[RESTORE] upsert 返回非 ok：" >&2
+    sed -n '1,160p' /tmp/qdr_upsert.json >&2 || true
+    exit 1
+  fi
+  # 以本批过滤后文本数作为增量计数
+  CNT=$(echo "$FS" | jq 'length')
   TOTAL=$(( TOTAL + CNT ))
   echo "[RESTORE] 本批写入 $CNT 条，累计 $TOTAL"
 
