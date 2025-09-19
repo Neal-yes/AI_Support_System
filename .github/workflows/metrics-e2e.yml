@@ -307,6 +307,49 @@ jobs:
           # 给 Prometheus 一个采样与评估窗口
           sleep 5
 
+<<<<<<< HEAD
+      - name: Stabilize samples for p95 (resample)
+        run: |
+          set +e
+          echo "Stabilizing samples with extra wait and re-sampling"
+          # 跨越至少一个抓取周期
+          sleep 10
+          # 5x plain
+          for i in $(seq 1 5); do
+            body="{\"query\":\"ping $i\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
+            curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
+              http://localhost:8000/api/v1/ask || true
+            sleep 1
+          done
+          # 5x RAG
+          for i in $(seq 1 5); do
+            body="{\"query\":\"检索 $i\",\"use_rag\":true,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
+            curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
+              http://localhost:8000/api/v1/ask || true
+            sleep 1
+          done
+          # 再给 Prom 一个窗口
+          sleep 5
+
+      - name: Wait histogram counts ready (<=60s)
+        run: |
+          set +e
+          mkdir -p artifacts/metrics
+          target=10
+          for t in $(seq 1 20); do
+            curl -sS http://localhost:8000/metrics -o artifacts/metrics/metrics_probe.prom || true
+            llm=$(awk '/^llm_generate_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
+            rag=$(awk '/^rag_retrieval_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
+            echo "wait counts attempt $t: LLM=${llm} RAG=${rag} (target >= ${target})"
+            if [ "$llm" -ge "$target" ] && [ "$rag" -ge "$target" ]; then
+              echo "counts ready"
+              break
+            fi
+            sleep 3
+          done
+
+=======
+>>>>>>> origin/main
       - name: Smoke test unified ask API
         env:
           MODEL: ${{ env.MODEL_SMALL }}
@@ -478,6 +521,7 @@ jobs:
             }
             {
               echo '# Latency percentiles (approx from histogram)'
+              echo "- Samples summary: LLM=${llm_count}, RAG=${rag_count}"
               echo
               if [ "${llm_count}" != "0" ]; then
                 v50=$(calc_pctile llm_generate_duration_seconds 0.50 "$llm_count"); [ -n "$v50" ] && echo "- LLM generate p50: $v50 s" || echo "- LLM generate p50: N/A (parse)"
