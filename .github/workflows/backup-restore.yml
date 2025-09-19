@@ -186,8 +186,8 @@ jobs:
             if ! echo "$dim" | grep -Eq '^[0-9]+$'; then dim=1536; fi
           fi
           echo "Using embedding dimension: $dim"
-          # Create collection with cosine distance
-          create_body=$(jq -n --argjson size "$dim" '{vectors: {size: $size, distance: "Cosine"}}')
+          # Create collection with cosine distance, named vector field 'text'
+          create_body=$(jq -n --argjson size "$dim" '{vectors: {text: {size: $size, distance: "Cosine"}}}')
           # Try create; ignore 409 Conflict
           http=$(curl -sS -o /tmp/create_resp.json -w "%{http_code}" -X PUT -H 'Content-Type: application/json' \
             -d "$create_body" "${QDRANT_HTTP}/collections/${coll}")
@@ -251,6 +251,15 @@ jobs:
           echo "restored_total_pre_scroll=${cnt}" >> $GITHUB_OUTPUT
           echo "Post-restore count: ${cnt}"
 
+      - name: Sample first 10 points (restored)
+        run: |
+          set -euo pipefail
+          coll="${{ steps.setcoll.outputs.restored }}"
+          echo "Sampling first 10 points from ${coll}"
+          body='{"limit":10, "with_payload":true, "with_vectors":false}'
+          resp=$(curl -sS -X POST -H 'Content-Type: application/json' -d "$body" "${QDRANT_HTTP}/collections/${coll}/points/scroll")
+          echo "$resp" | jq -c '.'
+
       - name: Verify restored count via exact count (restored)
         id: rv
         run: |
@@ -269,10 +278,19 @@ jobs:
             echo "Collection ${coll} does not exist before count and backup_total>0. Aborting." >&2
             exit 1
           fi
-          # Use points/count exact to compute restored_total
-          total=$(curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d '{"exact":true}' \
-            "${QDRANT_HTTP}/collections/${coll}/points/count" | jq -r '.result.count // 0')
+          # Use points/count exact to compute restored_total, retry up to 5 times
+          total="0"; attempt=1
+          while [ $attempt -le 5 ]; do
+            total=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+              -d '{"exact":true}' \
+              "${QDRANT_HTTP}/collections/${coll}/points/count" | jq -r '.result.count // 0')
+            echo "[COUNT] attempt=$attempt total=$total"
+            if [ "$total" != "0" ] || [ $attempt -ge 5 ]; then
+              break
+            fi
+            sleep 2
+            attempt=$(( attempt + 1 ))
+          done
           echo "restored_total=${total}" >> $GITHUB_OUTPUT
 
       - name: Compute durations and report
