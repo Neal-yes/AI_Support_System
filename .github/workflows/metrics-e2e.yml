@@ -648,7 +648,7 @@ jobs:
           } > artifacts/metrics/metrics_e2e_summary.txt
 
       - name: Update README Metrics Snapshot (optional)
-        if: ${{ vars.UPDATE_README_METRICS == 'true' && github.ref_name == 'main' }}
+        if: ${{ always() && vars.UPDATE_README_METRICS == 'true' && github.ref_name == 'main' }}
         run: |
           set -euo pipefail
           file="README.md"
