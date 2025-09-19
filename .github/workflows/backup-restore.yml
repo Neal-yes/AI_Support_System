@@ -7,7 +7,7 @@ on:
     - cron: '0 19 * * *'
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:
@@ -319,6 +319,40 @@ jobs:
           if [ "${{ steps.bk.outputs.bk_total }}" != "${{ steps.rv.outputs.restored_total }}" ]; then
             echo "::warning::Backup/Restore count mismatch: backup=${{ steps.bk.outputs.bk_total }} restored=${{ steps.rv.outputs.restored_total }}" >&2
           fi
+
+      - name: Update README Backup Signals (optional)
+        if: ${{ vars.UPDATE_README_SIGNALS == 'true' && github.ref_name == 'main' }}
+        env:
+          BK: ${{ steps.bk.outputs.bk_total }}
+          RT: ${{ steps.rv.outputs.restored_total }}
+          RTO: ${{ steps.t1.outputs.ts && steps.t0.outputs.ts && '' }}
+        run: |
+          set -euo pipefail
+          # Compute RTO seconds (reuse previously computed values)
+          t0=${{ steps.t0.outputs.ts }}
+          t1=${{ steps.t1.outputs.ts }}
+          t2=$(date +%s)
+          rto=$(( t2 - t1 ))
+          run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          file="README.md"
+          echo "Updating Backup Signals in $file"
+          tmp=$(mktemp)
+          awk -v bk="${{ steps.bk.outputs.bk_total }}" \
+              -v rt="${{ steps.rv.outputs.restored_total }}" \
+              -v rto="$rto" \
+              -v run="$run_url" '
+            BEGIN{inblk=0}
+            /<!-- BACKUP_SIGNALS_START -->/{print; print "### Backup Signals（最近一次)"; print ""; \
+              print "- backup_total: " bk; print "- restored_total: " rt; print "- RTO_seconds: " rto; print "- run: " run; inblk=1; next}
+            /<!-- BACKUP_SIGNALS_END -->/{inblk=0; print; next}
+            { if (!inblk) print }
+          ' "$file" > "$tmp"
+          mv "$tmp" "$file"
+          git config user.email "github-actions@users.noreply.github.com"
+          git config user.name "github-actions"
+          git add "$file"
+          git commit -m "docs(README): update Backup Signals [skip ci]" || exit 0
+          git push
 
       - name: Emit consolidated CI summary file
         env:
