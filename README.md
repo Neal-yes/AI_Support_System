@@ -31,13 +31,12 @@
 本项目为本地 AI 客服系统（FastAPI + Qdrant + Postgres + Redis + Ollama）。
 
 <!-- BACKUP_SIGNALS_START -->
-### Backup Signals（最近一次）
+### Backup Signals（最近一次)
 
-- backup_total: N/A
-- restored_total: N/A
-- RTO_seconds: N/A
-- run: N/A
-- 查看历史 Release：https://github.com/Neal-yes/AI_Support_System/releases
+- backup_total: 5
+- restored_total: 0
+- RTO_seconds: 9
+- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17847317200
 <!-- BACKUP_SIGNALS_END -->
 
 <!-- METRICS_SNAPSHOT_START -->
