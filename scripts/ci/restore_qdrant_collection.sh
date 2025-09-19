@@ -93,11 +93,11 @@ while [ $OFFSET -lt $COUNT ]; do
   VEC_LEN=$(echo "$VECTORS" | jq 'length')
   echo "[RESTORE] batch lens: fs=${FS_LEN} vec=${VEC_LEN}"
   
-  # 2) 组装 Qdrant points（仅对齐过滤后的切片，与 embeddings 一一对应）
+  # 2) 组装 Qdrant points（仅对齐过滤后的切片，与 embeddings 一一对应），统一使用命名向量字段 text
   POINTS=$(jq -n --argjson slice "$FS" --argjson vecs "$VECTORS" --argjson off $OFFSET '
     [ range(0; ($vecs|length)) as $i | {
         id: (if ($slice[$i].id != null) then $slice[$i].id else ($i + $off) end),
-        vector: ($vecs[$i] // []),
+        vectors: { text: ($vecs[$i] // []) },
         payload: ($slice[$i].payload // {})
       } ]')
   UPSERT_BODY=$(jq -n --argjson points "$POINTS" '{points:$points}')
