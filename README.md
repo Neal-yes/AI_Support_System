@@ -35,8 +35,8 @@
 
 - backup_total: 5
 - restored_total: 0
-- RTO_seconds: 10
-- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17867612282
+- RTO_seconds: 9
+- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17883788789
 <!-- BACKUP_SIGNALS_END -->
 
 <!-- METRICS_SNAPSHOT_START -->
