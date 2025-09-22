@@ -290,15 +290,15 @@ jobs:
         run: |
           set +e
           echo "Generating minimum samples for LLM and RAG p95 histograms"
-          # 12x plain (LLM path)
-          for i in $(seq 1 12); do
+          # 15x plain (LLM path)
+          for i in $(seq 1 15); do
             body="{\"query\":\"hi $i\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
             sleep 1
           done
-          # 12x RAG (retrieval path)
-          for i in $(seq 1 12); do
+          # 15x RAG (retrieval path)
+          for i in $(seq 1 15); do
             body="{\"query\":\"问答 $i\",\"use_rag\":true,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
@@ -313,15 +313,15 @@ jobs:
           echo "Stabilizing samples with extra wait and re-sampling"
           # 跨越至少一个抓取周期
           sleep 10
-          # 7x plain
-          for i in $(seq 1 7); do
+          # 10x plain
+          for i in $(seq 1 10); do
             body="{\"query\":\"ping $i\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
             sleep 1
           done
-          # 7x RAG
-          for i in $(seq 1 7); do
+          # 10x RAG
+          for i in $(seq 1 10); do
             body="{\"query\":\"检索 $i\",\"use_rag\":true,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
@@ -334,7 +334,7 @@ jobs:
         run: |
           set +e
           mkdir -p artifacts/metrics
-          target=15
+          target=20
           for t in $(seq 1 30); do
             curl -sS http://localhost:8000/metrics -o artifacts/metrics/metrics_probe.prom || true
             llm=$(awk '/^llm_generate_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
@@ -502,6 +502,10 @@ jobs:
           out_lat="artifacts/metrics/latency_percentiles.txt"
           out_api="artifacts/metrics/api_success.txt"
           out_api2="artifacts/metrics/api_success_extra.txt"
+          # 若输入不存在或关键计数为 0，则先刷新一次 /metrics 再计算
+          if [ ! -f "$in" ] || ! grep -q '^llm_generate_duration_seconds_count' "$in" || ! grep -q '^rag_retrieval_duration_seconds_count' "$in"; then
+            curl -fsS http://localhost:8000/metrics -o "$in" || true
+          fi
           if [ -f "$in" ]; then
             llm_count=$(awk '/^llm_generate_duration_seconds_count/ {c=$NF} END{print (c==""?0:c)}' "$in")
             rag_count=$(awk '/^rag_retrieval_duration_seconds_count/ {c=$NF} END{print (c==""?0:c)}' "$in")
@@ -550,6 +554,11 @@ jobs:
                 echo "- RAG samples: 0"
               fi
             } > "$out_lat"
+            # 将关键指标附加到 Job Summary
+            {
+              echo "## Latency Percentiles (computed)";
+              if [ -f "$out_lat" ]; then sed -n '1,40p' "$out_lat"; fi
+            } >> "$GITHUB_STEP_SUMMARY"
             # API success rate for /api/v1/ask
             {
               echo '# API Success (/api/v1/ask)'
