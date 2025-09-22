@@ -337,8 +337,8 @@ jobs:
           target=20
           for t in $(seq 1 30); do
             curl -sS http://localhost:8000/metrics -o artifacts/metrics/metrics_probe.prom || true
-            llm=$(awk '/^llm_generate_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
-            rag=$(awk '/^rag_retrieval_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
+            llm=$(awk '/^llm_generate_duration_seconds_count\b/ {v=$NF} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
+            rag=$(awk '/^rag_retrieval_duration_seconds_count\b/ {v=$NF} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
             echo "wait counts attempt $t: LLM=${llm} RAG=${rag} (target >= ${target})"
             if [ "$llm" -ge "$target" ] && [ "$rag" -ge "$target" ]; then
               echo "counts ready"
@@ -512,7 +512,7 @@ jobs:
             calc_pctile() {
               local prefix="$1" pct="$2" cnt="$3"
               awk -v tgt=$(awk -v c="$cnt" -v p="$pct" 'BEGIN{printf("%.6f", p*c)}') -v pre="$prefix" '
-                ("^" pre "_bucket\\{") ~ $0 {
+                $0 ~ ("^" pre "_bucket\\{") {
                   if (match($0,/le="([^"]+)"/,m)) {
                     le=m[1]; if (le=="+Inf") next; v=$NF; data[le+0]=v+0
                   }
