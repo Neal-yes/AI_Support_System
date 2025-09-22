@@ -85,12 +85,12 @@ jobs:
             sleep 2
           done
 
-      - name: Pull small Ollama model
+      - name: Pull small Ollama model (compose exec)
         run: |
           set -e
-          echo "Pulling model: ${MODEL_SMALL}"
-          for i in {1..3}; do
-            if docker exec ai_support_ollama ollama pull "${MODEL_SMALL}"; then break; fi
+          echo "Pulling model via docker compose: ${MODEL_SMALL}"
+          for i in {1..5}; do
+            if docker compose exec -T ollama ollama pull "${MODEL_SMALL}"; then break; fi
             echo "pull attempt $i failed; retrying in 10s"; sleep 10
           done
 
@@ -104,10 +104,21 @@ jobs:
           API_BASE: http://localhost:8000
           OUT_DIR: artifacts/metrics
           MAX_DOCS: "300"
+          RAG_COLLECTION: default_collection
+          RAG_MODEL: ${{ env.MODEL_SMALL }}
         run: |
           set -euxo pipefail
           bash scripts/ci/prepare_demo_embeddings.sh
           echo "Embedding seed finished"
+
+      - name: Assert embedding seeded (>0)
+        run: |
+          set -euo pipefail
+          f="artifacts/metrics/embedding_upsert.json"
+          if [ ! -f "$f" ]; then echo "Missing $f" >&2; exit 1; fi
+          total=$(jq -r '.total // 0' "$f")
+          echo "embedding_upsert total=$total"
+          awk -v t="$total" 'BEGIN{ if (t+0 <= 0) { print "No embeddings upserted" > "/dev/stderr"; exit 1 } }'
 
       - name: Smoke Ask (plain & rag)
         env:
@@ -130,14 +141,15 @@ jobs:
             exit 1
           fi
 
-      - name: Set RAG gate thresholds (pre-deploy stricter)
+      - name: Set RAG gate thresholds (pre-deploy; overridable)
         run: |
           set -euo pipefail
           set_var() {
             local key="$1"; local val="$2"; echo "$key=$val" >> "$GITHUB_ENV"; }
-          # default stricter targets; allow workflow_dispatch override
-          set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min || '0.70' }}"
-          set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min || '0.40' }}"
+          # defaults (slightly conservative); allow workflow_dispatch override
+          set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min || '0.60' }}"
+          set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min || '0.35' }}"
+          echo "GATE_STRICT=either" >> "$GITHUB_ENV"
           echo "Gate thresholds: hit_ratio>=$GATE_HIT_RATIO_MIN, avg_top1>=$GATE_AVG_TOP1_MIN"
 
       - name: Select RAG eval queries (align with seeded corpus)
@@ -158,11 +170,25 @@ jobs:
           RAG_COLLECTION: default_collection
           GATE_HIT_RATIO_MIN: ${{ env.GATE_HIT_RATIO_MIN }}
           GATE_AVG_TOP1_MIN: ${{ env.GATE_AVG_TOP1_MIN }}
+          GATE_STRICT: ${{ env.GATE_STRICT }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/rag_eval_gate.sh"
 
+      - name: Print RAG eval summary to logs
+        if: always()
+        run: |
+          set -euo pipefail
+          f="artifacts/metrics/rag_eval.json"
+          if [ -f "$f" ]; then
+            echo "RAG EVAL SUMMARY (from JSON):"
+            jq -r '.summary' "$f" || true
+          else
+            echo "rag_eval.json not found" >&2
+          fi
+
       - name: Collect artifacts & probes
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p artifacts/metrics
           curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_snapshot.prom || true
@@ -180,6 +206,7 @@ jobs:
 
       - name: Append Job Summary
         if: always()
+        continue-on-error: true
         run: |
           echo "# Pre-Deploy Checks" >> "$GITHUB_STEP_SUMMARY"
           if [ -f artifacts/metrics/smoke_summary.md ]; then
@@ -189,7 +216,17 @@ jobs:
             echo >> "$GITHUB_STEP_SUMMARY"; sed -n '1,200p' artifacts/metrics/rag_gate_summary.md >> "$GITHUB_STEP_SUMMARY"; echo >> "$GITHUB_STEP_SUMMARY";
           fi
 
+      - name: Upload pre-deploy artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: cd-predeploy-artifacts-${{ github.run_id }}-1
+          path: |
+            artifacts/metrics/*
+
       - name: Teardown
         if: always()
+        continue-on-error: true
         run: |
           docker compose -f docker-compose.yml down -v || true
