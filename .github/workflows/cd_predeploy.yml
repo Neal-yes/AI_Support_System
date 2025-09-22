@@ -194,16 +194,6 @@ jobs:
           curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_snapshot.prom || true
           ls -la artifacts/metrics || true
 
-      - name: Upload pre-deploy artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cd-predeploy-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            artifacts/metrics
-          if-no-files-found: warn
-          retention-days: 14
-
       - name: Append Job Summary
         if: always()
         continue-on-error: true
