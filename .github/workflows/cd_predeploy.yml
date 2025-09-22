@@ -140,9 +140,19 @@ jobs:
           set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min || '0.40' }}"
           echo "Gate thresholds: hit_ratio>=$GATE_HIT_RATIO_MIN, avg_top1>=$GATE_AVG_TOP1_MIN"
 
+      - name: Select RAG eval queries (align with seeded corpus)
+        run: |
+          set -euo pipefail
+          q1="artifacts/metrics/demo_faq.autogen.jsonl"
+          q2="demo_faq.jsonl"
+          sel=""
+          if [ -f "$q1" ]; then sel="$q1"; elif [ -f "$q2" ]; then sel="$q2"; fi
+          echo "RAG_EVAL_QUERIES=${sel}" >> "$GITHUB_ENV"
+          echo "Using RAG_EVAL_QUERIES=${sel:-<built-in>}"
+
       - name: RAG eval gate (pre-deploy)
         env:
-          RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
+          RAG_EVAL_QUERIES: ${{ env.RAG_EVAL_QUERIES }}
           RAG_TOP_K: "5"
           RAG_MODEL: ${{ env.MODEL_SMALL }}
           RAG_COLLECTION: default_collection
