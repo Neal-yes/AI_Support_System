@@ -328,7 +328,7 @@ jobs:
             sleep 1
           done
           # 再给 Prom 一个窗口
-          sleep 5
+          sleep 10
 
       - name: Wait histogram counts ready (<=60s)
         run: |
@@ -346,6 +346,9 @@ jobs:
             fi
             sleep 3
           done
+          # 计数就绪后再额外等待一次抓取-评估周期，并刷新 /metrics
+          sleep 10
+          curl -sS http://localhost:8000/metrics -o artifacts/metrics/metrics_probe.prom || true
 
       - name: Smoke test unified ask API
         env:
