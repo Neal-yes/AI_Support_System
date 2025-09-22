@@ -72,6 +72,19 @@ jobs:
           echo "Waiting for Prometheus (http://localhost:9090/-/ready)"
           for i in {1..40}; do curl -fsS http://localhost:9090/-/ready && break || sleep 5; done
 
+      - name: Wait API readiness (/-/ready)
+        run: |
+          set -euo pipefail
+          url="http://localhost:8000/-/ready"
+          echo "Waiting for $url ..."
+          for i in $(seq 1 60); do
+            code=$(curl -sS -o /tmp/ready.json -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ] && jq -e '.status == "ok" or .status == "degraded"' /tmp/ready.json >/dev/null 2>&1; then
+              echo "API ready ($code)"; break
+            fi
+            sleep 2
+          done
+
       - name: Pull small Ollama model
         run: |
           set -e
@@ -85,6 +98,16 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y jq curl
+
+      - name: Seed demo embeddings
+        env:
+          API_BASE: http://localhost:8000
+          OUT_DIR: artifacts/metrics
+          MAX_DOCS: "300"
+        run: |
+          set -euxo pipefail
+          bash scripts/ci/prepare_demo_embeddings.sh
+          echo "Embedding seed finished"
 
       - name: Smoke Ask (plain & rag)
         env:
@@ -122,6 +145,7 @@ jobs:
           RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
           RAG_TOP_K: "5"
           RAG_MODEL: ${{ env.MODEL_SMALL }}
+          RAG_COLLECTION: default_collection
           GATE_HIT_RATIO_MIN: ${{ env.GATE_HIT_RATIO_MIN }}
           GATE_AVG_TOP1_MIN: ${{ env.GATE_AVG_TOP1_MIN }}
         run: |
