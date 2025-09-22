@@ -290,15 +290,15 @@ jobs:
         run: |
           set +e
           echo "Generating minimum samples for LLM and RAG p95 histograms"
-          # 10x plain (LLM path)
-          for i in $(seq 1 10); do
+          # 12x plain (LLM path)
+          for i in $(seq 1 12); do
             body="{\"query\":\"hi $i\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
             sleep 1
           done
-          # 10x RAG (retrieval path)
-          for i in $(seq 1 10); do
+          # 12x RAG (retrieval path)
+          for i in $(seq 1 12); do
             body="{\"query\":\"问答 $i\",\"use_rag\":true,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
@@ -313,15 +313,15 @@ jobs:
           echo "Stabilizing samples with extra wait and re-sampling"
           # 跨越至少一个抓取周期
           sleep 10
-          # 5x plain
-          for i in $(seq 1 5); do
+          # 7x plain
+          for i in $(seq 1 7); do
             body="{\"query\":\"ping $i\",\"use_rag\":false,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
             sleep 1
           done
-          # 5x RAG
-          for i in $(seq 1 5); do
+          # 7x RAG
+          for i in $(seq 1 7); do
             body="{\"query\":\"检索 $i\",\"use_rag\":true,\"model\":\"${MODEL_SMALL}\",\"options\":{\"num_predict\":8}}"
             curl -sS -o /dev/null -w "%{http_code}\n" -H 'Content-Type: application/json' -d "$body" \
               http://localhost:8000/api/v1/ask || true
@@ -334,8 +334,8 @@ jobs:
         run: |
           set +e
           mkdir -p artifacts/metrics
-          target=10
-          for t in $(seq 1 20); do
+          target=15
+          for t in $(seq 1 30); do
             curl -sS http://localhost:8000/metrics -o artifacts/metrics/metrics_probe.prom || true
             llm=$(awk '/^llm_generate_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
             rag=$(awk '/^rag_retrieval_duration_seconds_count\b/ {v=$2} END{if(v=="") v=0; print v+0}' artifacts/metrics/metrics_probe.prom)
