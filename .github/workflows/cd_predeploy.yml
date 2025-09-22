@@ -1,0 +1,161 @@
+name: CD Pre-Deploy Checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate_hit_ratio_min:
+        description: "Override GATE_HIT_RATIO_MIN (e.g., 0.70)"
+        required: false
+        type: string
+      gate_avg_top1_min:
+        description: "Override GATE_AVG_TOP1_MIN (e.g., 0.40)"
+        required: false
+        type: string
+  push:
+    branches:
+      - 'release/*'
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  predeploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set model name (small, stable)
+        run: |
+          MODEL_VAL="${MODEL_SMALL:-qwen2:0.5b}"
+          echo "MODEL_SMALL=${MODEL_VAL}" >> "$GITHUB_ENV"
+          {
+            echo "## CI Model Selection";
+            echo;
+            echo "- MODEL_SMALL: ${MODEL_VAL}";
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Docker compose availability
+        run: docker compose version
+
+      - name: Prepare .env for Compose
+        run: |
+          if [ -f configs/env.example ]; then
+            cp -f configs/env.example .env
+            echo "Prepared .env from configs/env.example"
+          elif [ -f .env ]; then
+            echo ".env already present"
+          else
+            {
+              echo "COMPOSE_PROJECT_NAME=ai_support";
+              echo "GRAFANA_ADMIN_USER=admin";
+              echo "GRAFANA_ADMIN_PASSWORD=admin";
+            } > .env
+          fi
+
+      - name: Start minimal stack (api, redis, qdrant, ollama, prometheus)
+        run: |
+          docker compose -f docker-compose.yml pull || true
+          docker compose -f docker-compose.yml up -d api redis qdrant ollama prometheus
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for API (http://localhost:8000/metrics)"
+          for i in {1..40}; do curl -fsS http://localhost:8000/metrics && break || sleep 5; done
+          echo "Waiting for Ollama (http://localhost:11434)"
+          for i in {1..40}; do curl -fsS http://localhost:11434/api/tags && break || sleep 5; done
+          echo "Waiting for Prometheus (http://localhost:9090/-/ready)"
+          for i in {1..40}; do curl -fsS http://localhost:9090/-/ready && break || sleep 5; done
+
+      - name: Pull small Ollama model
+        run: |
+          set -e
+          echo "Pulling model: ${MODEL_SMALL}"
+          for i in {1..3}; do
+            if docker exec ai_support_ollama ollama pull "${MODEL_SMALL}"; then break; fi
+            echo "pull attempt $i failed; retrying in 10s"; sleep 10
+          done
+
+      - name: Install CLI deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
+
+      - name: Smoke Ask (plain & rag)
+        env:
+          MODEL: ${{ env.MODEL_SMALL }}
+          SMOKE_VERBOSE: "1"
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/smoke_ask.sh"
+
+      - name: Assert Smoke PASS
+        run: |
+          set -euo pipefail
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            if ! grep -qE '^- result: PASS$' artifacts/metrics/smoke_summary.md; then
+              echo "Smoke summary indicates failure:" >&2
+              sed -n '1,200p' artifacts/metrics/smoke_summary.md >&2 || true
+              exit 1
+            fi
+          else
+            echo "smoke_summary.md missing" >&2
+            exit 1
+          fi
+
+      - name: Set RAG gate thresholds (pre-deploy stricter)
+        run: |
+          set -euo pipefail
+          set_var() {
+            local key="$1"; local val="$2"; echo "$key=$val" >> "$GITHUB_ENV"; }
+          # default stricter targets; allow workflow_dispatch override
+          set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min || '0.70' }}"
+          set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min || '0.40' }}"
+          echo "Gate thresholds: hit_ratio>=$GATE_HIT_RATIO_MIN, avg_top1>=$GATE_AVG_TOP1_MIN"
+
+      - name: RAG eval gate (pre-deploy)
+        env:
+          RAG_EVAL_QUERIES: queries/rag_eval_50.jsonl
+          RAG_TOP_K: "5"
+          RAG_MODEL: ${{ env.MODEL_SMALL }}
+          GATE_HIT_RATIO_MIN: ${{ env.GATE_HIT_RATIO_MIN }}
+          GATE_AVG_TOP1_MIN: ${{ env.GATE_AVG_TOP1_MIN }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/ci/rag_eval_gate.sh"
+
+      - name: Collect artifacts & probes
+        if: always()
+        run: |
+          mkdir -p artifacts/metrics
+          curl -fsS http://localhost:8000/metrics -o artifacts/metrics/metrics_snapshot.prom || true
+          ls -la artifacts/metrics || true
+
+      - name: Upload pre-deploy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cd-predeploy-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/metrics
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Append Job Summary
+        if: always()
+        run: |
+          echo "# Pre-Deploy Checks" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/metrics/smoke_summary.md ]; then
+            echo >> "$GITHUB_STEP_SUMMARY"; sed -n '1,200p' artifacts/metrics/smoke_summary.md >> "$GITHUB_STEP_SUMMARY"; echo >> "$GITHUB_STEP_SUMMARY";
+          fi
+          if [ -f artifacts/metrics/rag_gate_summary.md ]; then
+            echo >> "$GITHUB_STEP_SUMMARY"; sed -n '1,200p' artifacts/metrics/rag_gate_summary.md >> "$GITHUB_STEP_SUMMARY"; echo >> "$GITHUB_STEP_SUMMARY";
+          fi
+
+      - name: Teardown
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml down -v || true
