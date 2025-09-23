@@ -144,13 +144,18 @@ jobs:
       - name: Set RAG gate thresholds (pre-deploy; overridable)
         run: |
           set -euo pipefail
-          set_var() {
-            local key="$1"; local val="$2"; echo "$key=$val" >> "$GITHUB_ENV"; }
-          # defaults (slightly conservative); allow workflow_dispatch override
-          set_var GATE_HIT_RATIO_MIN "${{ inputs.gate_hit_ratio_min || '0.60' }}"
-          set_var GATE_AVG_TOP1_MIN "${{ inputs.gate_avg_top1_min || '0.35' }}"
-          echo "GATE_STRICT=either" >> "$GITHUB_ENV"
-          echo "Gate thresholds: hit_ratio>=$GATE_HIT_RATIO_MIN, avg_top1>=$GATE_AVG_TOP1_MIN"
+          # Read inputs and safely default to conservative values
+          HIT="${{ inputs.gate_hit_ratio_min }}"; HIT="${HIT:-}"; HIT="${HIT:-0.60}"
+          AT1="${{ inputs.gate_avg_top1_min }}"; AT1="${AT1:-}"; AT1="${AT1:-0.35}"
+          STRICT="${GATE_STRICT:-either}"
+
+          # Export to GITHUB_ENV
+          echo "GATE_HIT_RATIO_MIN=${HIT}" >> "$GITHUB_ENV"
+          echo "GATE_AVG_TOP1_MIN=${AT1}" >> "$GITHUB_ENV"
+          echo "GATE_STRICT=${STRICT}" >> "$GITHUB_ENV"
+
+          # Print thresholds after export (avoid unbound var under set -u)
+          echo "Gate thresholds: hit_ratio>=${HIT}, avg_top1>=${AT1} (mode=${STRICT})"
 
       - name: Select RAG eval queries (align with seeded corpus)
         run: |
