@@ -42,10 +42,10 @@
 <!-- METRICS_SNAPSHOT_START -->
 ### Metrics Snapshot（最近一次）
 
-- LLM_generate_p95: 5.000
+- LLM_generate_p95: 2.500
 - RAG_retrieval_p95: 0.025
 - /api/v1/ask success_rate: 100.00%
-- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17932603799
+- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17933098583
 <!-- METRICS_SNAPSHOT_END -->
 
 ## 快速开始
