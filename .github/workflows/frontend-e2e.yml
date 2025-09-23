@@ -61,8 +61,8 @@ jobs:
           EXIT_CODE=0
           npx playwright test --retries=1 --reporter=line,junit || EXIT_CODE=$?
           # If JUnit report exists and indicates 0 failures, treat as success to avoid false negatives
-          if [ -f frontend/playwright-results.xml ]; then
-            FAILURES=$(grep -o 'failures="[0-9]\+"' frontend/playwright-results.xml | head -n1 | sed -E 's/[^0-9]//g' || echo "")
+          if [ -f playwright-results.xml ]; then
+            FAILURES=$(grep -o 'failures="[0-9]\+"' playwright-results.xml | head -n1 | sed -E 's/[^0-9]//g' || echo "")
             if [ "${FAILURES:-0}" = "0" ]; then
               EXIT_CODE=0
             fi
@@ -94,8 +94,8 @@ jobs:
           echo "# Frontend E2E (Playwright)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Node: $(node --version)" >> "$GITHUB_STEP_SUMMARY"
           echo "- NPM:  $(npm --version)" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f frontend/playwright-results.xml ]; then
+          if [ -f playwright-results.xml ]; then
             echo >> "$GITHUB_STEP_SUMMARY"
             echo "## JUnit (excerpt)" >> "$GITHUB_STEP_SUMMARY"
-            sed -n '1,200p' frontend/playwright-results.xml >> "$GITHUB_STEP_SUMMARY" || true
+            sed -n '1,200p' playwright-results.xml >> "$GITHUB_STEP_SUMMARY" || true
           fi
