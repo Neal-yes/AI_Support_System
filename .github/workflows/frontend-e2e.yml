@@ -1,0 +1,86 @@
+name: Frontend E2E (Playwright)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-e2e.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-e2e.yml'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run Playwright tests
+        env:
+          CI: '1'
+        run: |
+          npx playwright test --reporter=line,junit
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: frontend/playwright-report
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: frontend/playwright-results.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Append Job Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "# Frontend E2E (Playwright)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Node: $(node --version)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- NPM:  $(npm --version)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f playwright-results.xml ]; then
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "## JUnit (excerpt)" >> "$GITHUB_STEP_SUMMARY"
+            sed -n '1,200p' playwright-results.xml >> "$GITHUB_STEP_SUMMARY" || true
+          fi
