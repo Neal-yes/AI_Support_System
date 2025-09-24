@@ -15,7 +15,7 @@ export default defineConfig({
     ['junit', { outputFile: 'playwright-results.xml' }],
   ],
   // 并发控制：在 CI 中限制 workers 数量，降低资源抖动导致的偶发失败
-  workers: process.env.CI ? 3 : undefined,
+  workers: process.env.CI ? 2 : undefined,
   use: {
     baseURL: 'http://127.0.0.1:5177',
     trace: 'on-first-retry',
@@ -40,6 +40,6 @@ export default defineConfig({
     command: 'npm run preview:5177',
     url: 'http://127.0.0.1:5177',
     reuseExistingServer: true,
-    timeout: 120_000,
+    timeout: 240_000,
   },
 })

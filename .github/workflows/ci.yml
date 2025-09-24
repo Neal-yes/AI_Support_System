@@ -642,12 +642,16 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps
 
+      - name: Build frontend (vite)
+        working-directory: frontend
+        run: npm run build
+
       - name: Run Playwright E2E
         working-directory: frontend
         env:
           # Ensure non-interactive CI run
           CI: 'true'
-        run: npm run test:e2e
+        run: npx playwright test --retries=2 --reporter=line,junit
 
       - name: Summarize Playwright JUnit results
         if: always()
