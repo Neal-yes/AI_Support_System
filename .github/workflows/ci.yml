@@ -642,6 +642,10 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps
 
+      - name: Build frontend (vite)
+        working-directory: frontend
+        run: npm run build
+
       - name: Run Playwright E2E
         working-directory: frontend
         env:
