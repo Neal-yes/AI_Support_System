@@ -647,7 +647,7 @@ jobs:
         env:
           # Ensure non-interactive CI run
           CI: 'true'
-        run: npm run test:e2e
+        run: npx playwright test --retries=1 --reporter=line,junit
 
       - name: Summarize Playwright JUnit results
         if: always()
