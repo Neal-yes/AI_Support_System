@@ -48,6 +48,30 @@
 - run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17940345652
 <!-- METRICS_SNAPSHOT_END -->
 
+<!-- PROGRESS_SECTION_START -->
+### 进度报告（Progress Report）
+
+- 工作流页：https://github.com/Neal-yes/AI_Support_System/actions/workflows/progress.yml
+- 最近一次运行（成功）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17965301890
+- 工件（Artifacts）：
+  - 雷达图（progress-radar-png）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17965301890/artifacts/4089533231
+  - 看板（progress-kanban-md）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17965301890/artifacts/4089533266
+  - 摘要（progress-summary-json）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17965301890/artifacts/4089533323
+  - 打包汇总（progress-bundle）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17965301890/artifacts/4089533371
+<!-- PROGRESS_SECTION_END -->
+
+### CD Pre-Deploy Checks（预部署门禁）
+
+- 工作流页：https://github.com/Neal-yes/AI_Support_System/actions/workflows/cd_predeploy.yml
+- 最近一次运行（示例）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17932106746
+- 工件（Artifacts）：cd-predeploy-artifacts（包含 rag_eval.csv、CI Summary 等）
+- 默认阈值（可在 `workflow_dispatch` 覆盖）：
+  - gate_hit_ratio_min：0.60
+  - gate_avg_top1_min：0.35
+- 触发方式：
+  - 手动触发：点击“Run workflow”
+  - PR 触发：pull_request
+
 ## 快速开始
 
 1. 复制环境变量模板
