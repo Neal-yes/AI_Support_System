@@ -35,6 +35,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            workflows:
+              - '.github/workflows/frontend-e2e.yml'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
