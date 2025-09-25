@@ -38,7 +38,7 @@
 - RTO_seconds: 9
 - run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17925915020
 <!-- BACKUP_SIGNALS_END -->
-
+ 
 <!-- METRICS_SNAPSHOT_START -->
 ### Metrics Snapshot（最近一次）
 
@@ -49,7 +49,7 @@
 <!-- METRICS_SNAPSHOT_END -->
 
 <!-- PROGRESS_SECTION_START -->
-### 进度报告（Progress Report）
+### 进度报告（Progress Report） <a id="progress-report"></a> [![Progress](https://github.com/Neal-yes/AI_Support_System/actions/workflows/progress.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/progress.yml)
 
 - 工作流页：https://github.com/Neal-yes/AI_Support_System/actions/workflows/progress.yml
 - 最近一次运行（成功）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17996710285
