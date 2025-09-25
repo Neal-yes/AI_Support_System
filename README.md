@@ -52,12 +52,12 @@
 ### 进度报告（Progress Report）
 
 - 工作流页：https://github.com/Neal-yes/AI_Support_System/actions/workflows/progress.yml
-- 最近一次运行（成功）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17996710285
+- 最近一次运行（成功）：https://github.com/Neal-yes/AI_Support_System/actions/runs/17999221301
 - 工件（Artifacts）：
-  - progress-radar-png：https://github.com/Neal-yes/AI_Support_System/actions/runs/17996710285/artifacts/4100493493
-  - progress-kanban-md：https://github.com/Neal-yes/AI_Support_System/actions/runs/17996710285/artifacts/4100493579
-  - progress-summary-json：https://github.com/Neal-yes/AI_Support_System/actions/runs/17996710285/artifacts/4100493661
-  - progress-bundle：https://github.com/Neal-yes/AI_Support_System/actions/runs/17996710285/artifacts/4100493775
+  - progress-radar-png：https://github.com/Neal-yes/AI_Support_System/actions/runs/17999221301/artifacts/4101241103
+  - progress-kanban-md：https://github.com/Neal-yes/AI_Support_System/actions/runs/17999221301/artifacts/4101241195
+  - progress-summary-json：https://github.com/Neal-yes/AI_Support_System/actions/runs/17999221301/artifacts/4101241308
+  - progress-bundle：https://github.com/Neal-yes/AI_Support_System/actions/runs/17999221301/artifacts/4101241414
 <!-- PROGRESS_SECTION_END -->
 
 ### CD Pre-Deploy Checks（预部署门禁）
