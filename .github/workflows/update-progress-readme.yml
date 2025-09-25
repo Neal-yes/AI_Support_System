@@ -43,7 +43,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git commit -m "docs(readme): auto-update Progress Report links [skip ci]"
+          git commit -m "docs(readme): auto-update Progress Report links"
 
       - name: Create PR for README update
         if: ${{ !cancelled() }}
@@ -52,7 +52,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: bot/update-progress-readme
           title: "docs(readme): auto-update Progress Report links"
-          commit-message: "docs(readme): auto-update Progress Report links [skip ci]"
+          commit-message: "docs(readme): auto-update Progress Report links"
           body: |
             Auto-update README Progress section after successful Progress Report run.
             Source run: ${{ github.event.workflow_run.html_url }}
