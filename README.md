@@ -1,3 +1,29 @@
+# AI Support System
+
+[![Backup & Restore Qdrant](https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml)
+[![Latest Release (Backup Artifacts)](https://img.shields.io/github/v/release/Neal-yes/AI_Support_System?include_prereleases&label=Backup%20Artifacts%20Release)](https://github.com/Neal-yes/AI_Support_System/releases)
+[![CI](https://github.com/Neal-yes/AI_Support_System/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/ci.yml)
+[![Metrics E2E](https://github.com/Neal-yes/AI_Support_System/actions/workflows/metrics-e2e.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/metrics-e2e.yml)
+
+本项目为本地 AI 客服系统（FastAPI + Qdrant + Postgres + Redis + Ollama）。
+
+### CI/E2E 稳定性改进
+- CI（frontend-e2e job）：`--retries=2` 与 `junit` 报告，降低偶发抖动。
+- CI：在 Playwright 前显式 `npm run build`，确保 `vite preview` 有产物。
+- Playwright（CI 环境）：`webServer.timeout=240s`、`workers=2`。
+- Frontend E2E 工作流：仅在 `checkout` 之后执行 `paths-filter`，并对重步骤加 `if` 条件。
+- 参考运行：
+  - Frontend E2E（main）：https://github.com/Neal-yes/AI_Support_System/actions/runs/18004047257
+  - CI（main）：https://github.com/Neal-yes/AI_Support_System/actions/runs/18004047248
+
+<!-- BACKUP_SIGNALS_START -->
+### Backup Signals（最近一次)
+
+- backup_total: 5
+- restored_total: 0
+- RTO_seconds: 9
+- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17925915020
+<!-- BACKUP_SIGNALS_END -->
 
 ## 导出任务持久化（Redis，可选）
 
@@ -21,23 +47,6 @@
   ```bash
   curl -s http://localhost:8000/metrics | egrep 'export_status_total{.*(succeeded|failed|cancelled)'
   ```
-# AI Support System
-
-[![Backup & Restore Qdrant](https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/backup-restore.yml)
-[![Latest Release (Backup Artifacts)](https://img.shields.io/github/v/release/Neal-yes/AI_Support_System?include_prereleases&label=Backup%20Artifacts%20Release)](https://github.com/Neal-yes/AI_Support_System/releases)
-[![CI](https://github.com/Neal-yes/AI_Support_System/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/ci.yml)
-[![Metrics E2E](https://github.com/Neal-yes/AI_Support_System/actions/workflows/metrics-e2e.yml/badge.svg?branch=main)](https://github.com/Neal-yes/AI_Support_System/actions/workflows/metrics-e2e.yml)
-
-本项目为本地 AI 客服系统（FastAPI + Qdrant + Postgres + Redis + Ollama）。
-
-<!-- BACKUP_SIGNALS_START -->
-### Backup Signals（最近一次)
-
-- backup_total: 5
-- restored_total: 0
-- RTO_seconds: 9
-- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17925915020
-<!-- BACKUP_SIGNALS_END -->
 
 <!-- METRICS_SNAPSHOT_START -->
 ### Metrics Snapshot（最近一次）
@@ -69,7 +78,7 @@
   - gate_hit_ratio_min：0.60
   - gate_avg_top1_min：0.35
 - 触发方式：
-  - 手动触发：点击“Run workflow”
+  - 手动触发：点击"Run workflow"
   - PR 触发：pull_request
 
 ## 快速开始
@@ -121,11 +130,11 @@ docker compose down
     - 手动触发：在工作流页面点击 `Run workflow`
     - 定时触发：每日 03:00 Asia/Shanghai（19:00 UTC）
   - 工件保留期：14 天
-  - 校验：内置“Validate artifacts”步骤会断言工件内容并把结果写入 Job Summary
+  - 校验：内置"Validate artifacts"步骤会断言工件内容并把结果写入 Job Summary
 
 ### 最近备份/恢复信号（Backup Signals）
 
-- Release Notes 将在“Backup Signals”小节展示最近一次的关键指标：
+- Release Notes 将在"Backup Signals"小节展示最近一次的关键指标：
   - `backup_total` / `restored_total` / `RTO_seconds`
 - 这些指标来自 CI 汇总文本 `artifacts/metrics/ci_summary.txt`（工作流自动生成），并在 Release 工作流 `/.github/workflows/release-backup.yml` 中注入。
 
@@ -471,7 +480,7 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
     }
   }
   ```
-  - 以上示例展示了在“租户-工具名”层为 `http_get.simple` 配置 `allow_hosts`，仅允许访问 `example.com`。
+  - 以上示例展示了在"租户-工具名"层为 `http_get.simple` 配置 `allow_hosts`，仅允许访问 `example.com`。
   - 你也可以在更高层（如 `tenants.default.tools.http_get.options`）配置 `deny_hosts`，并在名称层按需覆盖：
     ```json
     {
@@ -576,22 +585,22 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
     -H 'Content-Type: application/json' \
 
 - 观测联动（可选配置）：
-  - 在页面中“观测链接”折叠区配置：
+  - 在页面中"观测链接"折叠区配置：
   - Prometheus 基础 URL（例如 `http://localhost:9090`）与查询模板
   - 日志系统基础 URL（例如 Loki/Kibana 网关地址）与查询模板
   - 查询模板占位符：`$tenant`、`$type`、`$name`、`$key`（分别对应 `tenant_id`、`tool_type`、`tool_name`、策略键名）
-  - 表格“Obs”列：
-  - 点击“指标”会在新窗口打开 Prometheus 查询URL
-  - 点击“日志”会在新窗口打开日志检索URL
+  - 表格"Obs"列：
+  - 点击"指标"会在新窗口打开 Prometheus 查询URL
+  - 点击"日志"会在新窗口打开日志检索URL
   - Prometheus 兼容性：若基础 URL 以 `/graph` 风格为主，前端会自动拼接 `g0.expr=`；否则使用 `query=`
   - 观测配置持久化与重置：
     - 前端会将上述观测配置保存在浏览器 `localStorage`（键：`toolsObsConf`），刷新页面后自动恢复。
-    - 如需清空，使用“重置观测配置”按钮（位于“观测链接”折叠区底部），将恢复默认模板并清除本地存储。
+    - 如需清空，使用"重置观测配置"按钮（位于"观测链接"折叠区底部），将恢复默认模板并清除本地存储。
   - 模板预览与测试打开：
-    - 在“测试键名”中输入如 `timeout_ms`，下方会实时展示 PromQL 与日志查询的模板替换预览。
-    - 点击“测试打开指标/测试打开日志”，将使用当前配置与测试键名在新标签页打开对应查询，便于快速验证。
+    - 在"测试键名"中输入如 `timeout_ms`，下方会实时展示 PromQL 与日志查询的模板替换预览。
+    - 点击"测试打开指标/测试打开日志"，将使用当前配置与测试键名在新标签页打开对应查询，便于快速验证。
   - 环境默认值（可选）：
-    - 支持通过 Vite 环境变量为观测配置预填默认值（在无 localStorage 时加载，且“重置观测配置”时也会优先恢复为这些默认值）：
+    - 支持通过 Vite 环境变量为观测配置预填默认值（在无 localStorage 时加载，且"重置观测配置"时也会优先恢复为这些默认值）：
       - `VITE_OBS_PROM_BASE`
       - `VITE_OBS_PROM_QUERY_TPL`
       - `VITE_OBS_LOGS_BASE`
@@ -600,21 +609,21 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
       - `VITE_OBS_PROM_BASE=http://localhost:9090/graph`
       - `VITE_OBS_LOGS_BASE=https://logs.example.com/search`
   - 导入/导出配置：
-    - “导出配置”会将当前观测配置下载为 `toolsObsConf.json`，便于共享或备份。
-    - “导入配置”支持选择上述 JSON 文件进行恢复；导入后会立即写入 localStorage 并更新表单。
+    - "导出配置"会将当前观测配置下载为 `toolsObsConf.json`，便于共享或备份。
+    - "导入配置"支持选择上述 JSON 文件进行恢复；导入后会立即写入 localStorage 并更新表单。
     - 表单校验与提示：
       - 基地址需以 `http/https` 开头，非法时会在输入框旁显示红色提示，并禁用测试按钮。
       - 测试按钮在被禁用时，会通过 `title` 提示禁用原因；点击测试若地址非法会弹出警告。
       - 导入 JSON 解析失败或键缺失时，保持现状并提示错误。
 
-    - 更多判定与样例：参见 `docs/tools_screenshots.md` 中的“启用态（文字说明）”及导入样例 `docs/assets/toolsObsConf.json`。
+    - 更多判定与样例：参见 `docs/tools_screenshots.md` 中的"启用态（文字说明）"及导入样例 `docs/assets/toolsObsConf.json`。
 
 - 操作步骤建议：
-  1) 填写 `tenant_id`、`tool_type`、`tool_name`、`params`、`options`；或使用“按类型模板”快速填充
-  2) 点击“预览合并策略”，在下方查看 `merged_options` 与“策略层级 Diff 表”
-  3) 使用“键名过滤/预设筛选/子键排序表达式”快速定位关注项
-  4) 如需跳转指标/日志，先在“观测链接”中配置基础URL与模板，再点击对应行“Obs”列的按钮
-  5) 若数据量大且滚动卡顿，启用“虚拟滚动”并调整高度；需要导出则使用 CSV 按钮
+  1) 填写 `tenant_id`、`tool_type`、`tool_name`、`params`、`options`；或使用"按类型模板"快速填充
+  2) 点击"预览合并策略"，在下方查看 `merged_options` 与"策略层级 Diff 表"
+  3) 使用"键名过滤/预设筛选/子键排序表达式"快速定位关注项
+  4) 如需跳转指标/日志，先在"观测链接"中配置基础URL与模板，再点击对应行"Obs"列的按钮
+  5) 若数据量大且滚动卡顿，启用"虚拟滚动"并调整高度；需要导出则使用 CSV 按钮
 
 - 性能与可用性说明：
   - 虚拟滚动与分页互斥；仅在其一启用时生效
@@ -629,15 +638,15 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
   - 行级 Obs 跳转：![row actions](docs/assets/tools-obs-row-actions.png)
   - 动图演示（可选）：![demo gif](docs/assets/tools-obs-demo.gif)
     - 若未生成 GIF，可忽略此项；或直接使用已准备的静态帧序列目录 `docs/assets/gif_frames/`（frame01.png ~ frame06.png）进行阅读或后续合成。
-  - 当未配置观测基础 URL 时，“Obs”列按钮将禁用
+  - 当未配置观测基础 URL 时，"Obs"列按钮将禁用
   - 子键排序仅在按 Merged 列排序时生效；表达式解析失败时自动降级
-  - 已去除重复的“启用虚拟滚动”标签，保持 UI 简洁
+  - 已去除重复的"启用虚拟滚动"标签，保持 UI 简洁
 
 - 模板示例（可根据你的环境调整）：
   - Prometheus：`sum by (tool_type,tool_name) (increase(tools_errors_total{tenant="$tenant",tool_type="$type",tool_name="$name"}[5m]))`
   - 日志：`{tenant="$tenant",tool_type="$type",tool_name="$name"} |= "$key"`
 
-> 提示：若你的监控/日志系统有固定空间或组织参数，可直接在“基础 URL”中带上预置的查询面板路径，只需在模板里替换上述占位符即可。
+> 提示：若你的监控/日志系统有固定空间或组织参数，可直接在"基础 URL"中带上预置的查询面板路径，只需在模板里替换上述占位符即可。
 
 ### 模板版本与审计
 
@@ -690,7 +699,7 @@ uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
   curl -L "http://localhost:8000/collections/export/download_by_task?task_id=$task_id" -o demo_export.jsonl
   head -n 3 demo_export.jsonl
   ```
-  注意：当前为“内存任务表”实现，API 重启后任务状态会丢失；如需持久化，请接入存储（如 Redis/DB）。
+  注意：当前为"内存任务表"实现，API 重启后任务状态会丢失；如需持久化，请接入存储（如 Redis/DB）。
 
 - __后台导出：取消任务与自动清理__
   ```bash
@@ -969,7 +978,7 @@ MIT
   - 请求到后台任务：启动导出时会把当前请求的 `request_id` 作为 `trace_id` 写入任务上下文，后续 `export_*` 日志会携带同一 `trace_id`，便于关联。
   - 下载端点日志会携带 `request_id`，可与访问日志对齐。
 
-### 稳定复现“取消”
+### 稳定复现"取消"
 
 - 小数据集下任务完成过快，取消可能不易命中。建议：
   1) 将 `delay_ms_per_point` 调大（如 10000ms）：
@@ -1063,7 +1072,7 @@ MIT
   curl -N -s "http://localhost:8000/chat/rag_stream_sse?query=%E5%A6%82%E4%BD%95%E8%A7%A3%E5%86%B3%E7%99%BB%E5%BD%95%E5%A4%B1%E8%B4%A5&collection=demo&filters=%7B%22tag%22%3A%22faq%22%7D"
   ```
 
-期望 RAG SSE 输出末尾包含“参考来源”，如：
+期望 RAG SSE 输出末尾包含"参考来源"，如：
 ```
 data: 参考来源:
 data: - id=... score=0.70 tag=faq title=登录失败可能是密码错误。
@@ -1122,7 +1131,7 @@ data: [DONE]
   
   #### RAG 预检软失败与前端提示
   - 端点：`POST /api/v1/rag/preflight`，异常时返回 200 + JSON `{ ok: false, error: "..." }`（软失败），避免前端崩溃。
-  - 前端在 `Home.vue` 展示错误提示与“重试”按钮，i18n 键：`preflightErr`、`retry`。
+  - 前端在 `Home.vue` 展示错误提示与"重试"按钮，i18n 键：`preflightErr`、`retry`。
   - 代码位置：`frontend/src/views/Home.vue`、`frontend/src/i18n.ts`。
   
   #### CI 测试与环境变量
@@ -1447,7 +1456,7 @@ receivers:
   1. 打开 `configs/rules/ai_support_rules.yml`
   2. 取消注释 `ai_support_http_demo` 规则组
   3. 重启 Prometheus：`docker compose restart prometheus`
-  4. 触发 429 示例见“并发限制与监控（下载/导出）”
+  4. 触发 429 示例见"并发限制与监控（下载/导出）"
 
 - __恢复生产建议__
   1. 保持 `ai_support_http_demo` 注释（默认已注释）
@@ -1527,7 +1536,7 @@ export GATE_HIT_RATIO_MIN=0.60
 export GATE_AVG_TOP1_MIN=0.30
 bash scripts/ci/rag_eval_gate.sh
 ```
- - CI 集成：见 `.github/workflows/metrics-e2e.yml` 中“RAG eval gate (pre-deploy)”步骤。
+ - CI 集成：见 `.github/workflows/metrics-e2e.yml` 中"RAG eval gate (pre-deploy)"步骤。
 
 #### CI 分支差异化策略与阈值说明
 
@@ -1550,7 +1559,7 @@ bash scripts/ci/rag_eval_gate.sh
 - 告警规则收紧（release/*）：工作流在启动 Prometheus 之前动态修改 `configs/rules/ai_support_rules.yml` 中 `ai_support_rag_ask` 组的 p95 阈值：
   - `LlmGenerateLatencyP95High`: `histogram_quantile(0.95, sum by (le) (rate(llm_generate_duration_seconds_bucket[5m]))) > 1.5`
   - `RagRetrievalLatencyP95High`: `histogram_quantile(0.95, sum by (le) (rate(rag_retrieval_duration_seconds_bucket[5m]))) > 0.8`
-  - 相关步骤：`.github/workflows/metrics-e2e.yml` 的 “Tighten ai_support_rag_ask p95 thresholds by branch”。
+  - 相关步骤：`.github/workflows/metrics-e2e.yml` 的 "Tighten ai_support_rag_ask p95 thresholds by branch"。
 
 ### 冒烟（Ask 接口）
 
