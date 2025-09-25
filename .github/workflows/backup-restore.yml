@@ -57,6 +57,19 @@ jobs:
           docker compose up -d db qdrant ollama api
           docker compose ps
 
+      - name: Wait Qdrant /readyz
+        run: |
+          set -euo pipefail
+          url="${QDRANT_HTTP}/readyz"
+          echo "Waiting for $url ..."
+          for i in $(seq 1 150); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Qdrant ready ($code)"; break
+            fi
+            sleep 2
+          done
+
       - name: Wait /-/ready
         run: |
           set -euo pipefail
@@ -186,17 +199,24 @@ jobs:
             if ! echo "$dim" | grep -Eq '^[0-9]+$'; then dim=1536; fi
           fi
           echo "Using embedding dimension: $dim"
-          # Create collection with cosine distance, named vector field 'text'
+          # Create collection with cosine distance, named vector field 'text' (retry on 404/5xx)
           create_body=$(jq -n --argjson size "$dim" '{vectors: {text: {size: $size, distance: "Cosine"}}}')
-          # Try create; ignore 409 Conflict
-          http=$(curl -sS -o /tmp/create_resp.json -w "%{http_code}" -X PUT -H 'Content-Type: application/json' \
-            -d "$create_body" "${QDRANT_HTTP}/collections/${coll}")
-          if [ "$http" != "200" ] && [ "$http" != "202" ] && [ "$http" != "409" ]; then
-            echo "Create collection failed http=$http" >&2
+          attempts=0
+          while [ $attempts -lt 3 ]; do
+            http=$(curl -sS -o /tmp/create_resp.json -w "%{http_code}" -X PUT -H 'Content-Type: application/json' \
+              -d "$create_body" "${QDRANT_HTTP}/collections/${coll}")
+            if [ "$http" = "200" ] || [ "$http" = "202" ] || [ "$http" = "409" ]; then
+              echo "Collection ${coll} ensured (http=$http)"; break
+            fi
+            echo "Create collection failed http=$http; retrying..." >&2
             sed -n '1,160p' /tmp/create_resp.json >&2 || true
+            attempts=$((attempts+1))
+            sleep 2
+          done
+          if [ "$http" != "200" ] && [ "$http" != "202" ] && [ "$http" != "409" ]; then
+            echo "Create collection failed after retries http=$http" >&2
             exit 1
           fi
-          echo "Collection ${coll} ensured (http=$http)"
 
       - name: Warmup embedding model (restored)
         run: |
@@ -321,38 +341,13 @@ jobs:
           fi
 
       - name: Update README Backup Signals (optional)
-        if: ${{ vars.UPDATE_README_SIGNALS == 'true' && github.ref_name == 'main' }}
+        if: ${{ false }}
         env:
           BK: ${{ steps.bk.outputs.bk_total }}
           RT: ${{ steps.rv.outputs.restored_total }}
           RTO: ${{ steps.t1.outputs.ts && steps.t0.outputs.ts && '' }}
         run: |
-          set -euo pipefail
-          # Compute RTO seconds (reuse previously computed values)
-          t0=${{ steps.t0.outputs.ts }}
-          t1=${{ steps.t1.outputs.ts }}
-          t2=$(date +%s)
-          rto=$(( t2 - t1 ))
-          run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          file="README.md"
-          echo "Updating Backup Signals in $file"
-          tmp=$(mktemp)
-          awk -v bk="${{ steps.bk.outputs.bk_total }}" \
-              -v rt="${{ steps.rv.outputs.restored_total }}" \
-              -v rto="$rto" \
-              -v run="$run_url" '
-            BEGIN{inblk=0}
-            /<!-- BACKUP_SIGNALS_START -->/{print; print "### Backup Signals（最近一次)"; print ""; \
-              print "- backup_total: " bk; print "- restored_total: " rt; print "- RTO_seconds: " rto; print "- run: " run; inblk=1; next}
-            /<!-- BACKUP_SIGNALS_END -->/{inblk=0; print; next}
-            { if (!inblk) print }
-          ' "$file" > "$tmp"
-          mv "$tmp" "$file"
-          git config user.email "github-actions@users.noreply.github.com"
-          git config user.name "github-actions"
-          git add "$file"
-          git commit -m "docs(README): update Backup Signals [skip ci]" || exit 0
-          git push
+          : "disabled direct push to protected main; use Job Summary only"
 
       - name: Emit consolidated CI summary file
         env:
