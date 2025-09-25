@@ -1,0 +1,81 @@
+name: Auto-approve and automerge README PR
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  approve-and-automerge:
+    name: Approve and enable auto-merge (squash)
+    if: >-
+      ${{ github.event.pull_request.head.ref == 'bot/update-progress-readme' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check changed files are only README.md
+        id: check_files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100
+            });
+            const allowed = ['README.md'];
+            const changed = files.map(f => f.filename);
+            const onlyReadme = changed.every(f => allowed.includes(f)) && changed.length > 0;
+            core.info(`Changed files: ${JSON.stringify(changed)}`);
+            core.setOutput('onlyReadme', onlyReadme ? 'true' : 'false');
+
+      - name: Check has automated-pr label
+        id: check_label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = (context.payload.pull_request.labels || []).map(l => l.name);
+            const ok = labels.includes('automated-pr');
+            core.info(`Labels: ${JSON.stringify(labels)}`);
+            core.setOutput('hasLabel', ok ? 'true' : 'false');
+
+      - name: Approve PR
+        if: ${{ steps.check_files.outputs.onlyReadme == 'true' && steps.check_label.outputs.hasLabel == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              event: 'APPROVE',
+              body: 'Auto-approve README auto-update PR.'
+            });
+
+      - name: Enable auto-merge (squash)
+        if: ${{ steps.check_files.outputs.onlyReadme == 'true' && steps.check_label.outputs.hasLabel == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const nodeId = pr.node_id;
+            const mutation = `mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+              enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: $mergeMethod}) {
+                pullRequest { number, autoMergeRequest { enabledAt, enabledBy { login } } }
+              }
+            }`;
+            try {
+              const res = await github.graphql(mutation, {
+                pullRequestId: nodeId,
+                mergeMethod: 'SQUASH'
+              });
+              core.info(`Enabled auto-merge: ${JSON.stringify(res)}`);
+            } catch (err) {
+              core.warning(`Failed to enable auto-merge: ${err.message}`);
+              throw err;
+            }

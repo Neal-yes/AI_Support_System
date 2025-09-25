@@ -1,0 +1,41 @@
+name: Frontend E2E Proxy (docs-only)
+
+on:
+  pull_request_target:
+    branches: [ main, master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: frontend-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Detect changed paths (PR target)
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            workflows:
+              - '.github/workflows/frontend-e2e.yml'
+              - '.github/workflows/frontend-e2e-proxy.yml'
+              - '.github/workflows/**'
+
+      - name: No-op to satisfy required check for docs-only PRs
+        if: steps.changes.outputs.frontend != 'true' && steps.changes.outputs.workflows != 'true'
+        run: |
+          echo "Docs-only PR detected on pull_request_target; satisfying required 'frontend-e2e' check via proxy workflow."
+          echo "This job intentionally does not run heavy E2E steps."
+
+      - name: Skip when frontend/workflows changed (real E2E should run from PR branch)
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true'
+        run: |
+          echo "Frontend or workflow files changed. Skipping proxy job to avoid duplicate context."
+          echo "The real 'frontend-e2e' job from PR branch should report status."

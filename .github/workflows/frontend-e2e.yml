@@ -4,14 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-e2e.yml'
   pull_request:
     branches: [ main, master ]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-e2e.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,12 +13,23 @@ concurrency:
 
 jobs:
   e2e:
+    name: frontend-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
         working-directory: frontend
     steps:
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            workflows:
+              - '.github/workflows/frontend-e2e.yml'
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -48,21 +53,26 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Cache Playwright browsers
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
 
       - name: Install dependencies
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true'
         run: npm ci
 
       - name: Install Playwright Browsers
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true'
         run: npx playwright install --with-deps
 
       - name: Build frontend
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true'
         run: npm run build
 
       - name: Run Playwright tests
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true'
         env:
           CI: '1'
         run: |
@@ -80,7 +90,7 @@ jobs:
           exit "$EXIT_CODE"
 
       - name: Upload Playwright HTML report
-        if: always()
+        if: always() && (steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
@@ -89,7 +99,7 @@ jobs:
           retention-days: 14
 
       - name: Upload JUnit results
-        if: always()
+        if: always() && (steps.changes.outputs.frontend == 'true' || steps.changes.outputs.workflows == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: junit-results-${{ github.run_id }}-${{ github.run_attempt }}
@@ -109,3 +119,9 @@ jobs:
             echo "## JUnit (excerpt)" >> "$GITHUB_STEP_SUMMARY"
             sed -n '1,200p' playwright-results.xml >> "$GITHUB_STEP_SUMMARY" || true
           fi
+
+      - name: No-op for non-frontend changes (docs-only)
+        if: steps.changes.outputs.frontend != 'true' && steps.changes.outputs.workflows != 'true'
+        run: |
+          echo "No frontend changes detected; skipping heavy E2E steps."
+          echo "Docs-only change: satisfying required check quickly."
