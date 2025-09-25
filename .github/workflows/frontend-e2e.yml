@@ -20,16 +20,6 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - name: Detect changed paths
-        id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            frontend:
-              - 'frontend/**'
-            workflows:
-              - '.github/workflows/frontend-e2e.yml'
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
