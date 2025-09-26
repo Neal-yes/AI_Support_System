@@ -102,3 +102,17 @@
 - RTO：__ 秒
 - 抽样检索示例响应：见 `download_artifacts/<RUN_ID>/...`
 - 指标截图：Grafana 面板链接/截图路径
+
+---
+
+## 最新一次演练记录
+- 运行链接：https://github.com/Neal-yes/AI_Support_System/actions/runs/18018181239
+- 源集合：`default_collection`
+- 目标集合：`default_collection__restored`
+- 汇总（来自 `ci_summary.txt`）：
+  - seed_total: 5
+  - backup_total: 5
+  - restored_total: 0
+  - backup_duration_seconds: 11
+  - restore_duration_seconds (RTO): 11
+- 工件目录：`download_artifacts/18018181239/`（含 `ci_summary.txt`、`embedding_upsert.json`、`qdrant_default_collection_dump.json`）
