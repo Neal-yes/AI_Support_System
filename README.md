@@ -7,10 +7,6 @@
 
 本项目为本地 AI 客服系统（FastAPI + Qdrant + Postgres + Redis + Ollama）。
 
-### Runbook 快捷入口
-- 备份/恢复 Runbook：`docs/backup_restore_runbook.md`
-- 最近一次 Backup & Restore（main）：https://github.com/Neal-yes/AI_Support_System/actions/runs/18018181239
-
 ### CI/E2E 稳定性改进
 - CI（frontend-e2e job）：`--retries=2` 与 `junit` 报告，降低偶发抖动。
 - CI：在 Playwright 前显式 `npm run build`，确保 `vite preview` 有产物。
