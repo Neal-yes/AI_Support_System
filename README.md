@@ -54,7 +54,7 @@
 - LLM_generate_p95: 2.500
 - RAG_retrieval_p95: 0.025
 - /api/v1/ask success_rate: 100.00%
-- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/17940345652
+- run: https://github.com/Neal-yes/AI_Support_System/actions/runs/18026086487
 <!-- METRICS_SNAPSHOT_END -->
 
 <!-- PROGRESS_SECTION_START -->
