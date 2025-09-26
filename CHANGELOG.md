@@ -14,6 +14,7 @@
 - CI：在运行 Playwright 前新增“Build frontend (vite)”步骤，保证 `vite preview` 有可用构建产物。
 - Playwright 配置（`frontend/playwright.config.ts`）：在 CI 下将 `webServer.timeout` 提升至 240s、`workers` 降为 2。
 - Frontend E2E 工作流（`.github/workflows/frontend-e2e.yml`）：仅在 `actions/checkout@v4` 之后执行 `dorny/paths-filter@v3`，并依据 paths-filter 结果对重步骤加条件执行。
+- Metrics Snapshot：更新主分支 Metrics E2E 基线（Run 18026086487）：LLM p95 2.500s、RAG p95 0.025s、`/api/v1/ask` 成功率 100.00%。
 
 ### Fixed
 - 修复 Frontend E2E 在“Detect changed paths”于 checkout 之前执行导致的失败；调整步骤顺序后恢复稳定。
